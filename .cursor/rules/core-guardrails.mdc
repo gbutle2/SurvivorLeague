@@ -1,0 +1,17 @@
+---
+description: Core engineering guardrails for Sunday Survivor Picks
+alwaysApply: true
+---
+
+# Core guardrails
+
+- Inspect before editing; make the smallest coherent change.
+- Do not invent requirements, data, setup, or test results.
+- Ask when an undefined decision affects scoring, security, or stored data.
+- No unrelated features, services, abstractions, dependencies, or refactors.
+- No remote migrations, deployments, production-data changes, or domain changes without explicit approval.
+- Enforce rules in server/database code, not UI-only checks.
+- Keep scoring centralized and deterministic when implemented.
+- Prefer mobile-first, accessible UI.
+- Before finishing: lint, clean typecheck after `npm ci`, focused tests that exist, production build.
+- Handoff must list checks actually run and migrations created vs applied.

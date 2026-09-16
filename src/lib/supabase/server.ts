@@ -8,7 +8,7 @@ export async function createClient() {
 
   return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
       cookies: {
         getAll() {
@@ -21,7 +21,7 @@ export async function createClient() {
             });
           } catch {
             // Called from a Server Component where cookies are read-only.
-            // Middleware will refresh the session instead.
+            // Proxy will refresh the session instead.
           }
         },
       },

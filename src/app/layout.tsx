@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DM_Sans, Source_Serif_4 } from "next/font/google";
+import type { ReactNode } from "react";
 
 import "./globals.css";
 
@@ -18,7 +19,11 @@ export const metadata: Metadata = {
   description: "Private NFL survivor league picks and standings.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: ReactNode;
+}>) {
   return (
     <html
       lang="en"

@@ -9,7 +9,7 @@ Stack: Next.js App Router, TypeScript, Tailwind CSS, Supabase (Auth + PostgreSQL
 1. Clone the repo and install dependencies:
 
 ```bash
-npm install
+npm ci
 ```
 
 2. Copy environment variables:
@@ -23,11 +23,11 @@ cp .env.example .env.local
 | Variable | Description |
 | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | Project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon / public key |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable (browser-safe) key |
 
-Never put the **service role** key in `NEXT_PUBLIC_*` variables or commit it.
+Never put the **service role / secret** key in `NEXT_PUBLIC_*` variables or commit it.
 
-4. Create a Supabase project and apply migrations (below).
+4. Create a Supabase project and apply migrations when approved (below).
 
 5. Create the first commissioner (see [docs/commissioner-setup.md](docs/commissioner-setup.md)).
 
@@ -39,18 +39,28 @@ Migrations live in `supabase/migrations/` and run in filename order:
 2. `20260916120100_security_helpers.sql` — SECURITY DEFINER helpers + pick constraints
 3. `20260916120200_rls.sql` — Row Level Security policies
 4. `20260916120300_seed_nfl_teams.sql` — all 32 NFL teams
+5. `20260916130000_phase1_pick_security.sql` — Phase 1 pick/security corrections
 
-### Option A: Supabase CLI
+Do **not** apply migrations to remote Supabase unless explicitly approved.
+
+### Option A: Supabase CLI (local)
 
 ```bash
-npx supabase login
-npx supabase link --project-ref <your-project-ref>
-npx supabase db push
+npx supabase start
+npx supabase db reset
 ```
 
-### Option B: SQL editor
+### Option B: SQL editor (remote, only when approved)
 
 In the Supabase Dashboard SQL editor, run each migration file in order.
+
+## Database authorization tests
+
+```bash
+npm run test:db
+```
+
+Requires Docker + local Supabase. These tests cover pick visibility, lock timing, reuse rules, membership, and commissioner controls.
 
 ## Creating the first commissioner
 
@@ -72,7 +82,10 @@ Open [http://localhost:3000](http://localhost:3000). Unauthenticated visitors ar
 
 ## Type checking
 
+Clean checkout (no prior `next build` required):
+
 ```bash
+npm ci
 npm run typecheck
 ```
 
@@ -93,8 +106,8 @@ npm run build
 1. Import `gbutle2/SurvivorLeague` into Vercel
 2. Set environment variables:
    - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-3. Deploy the `main` branch
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+3. Deploy the `main` branch only after approval
 4. In Supabase Auth → URL configuration, add your Vercel URL to redirect allow-list / site URL
 
 Do not connect a custom domain until Phase 1 is verified.
