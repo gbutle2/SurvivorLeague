@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
+    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
     "test:db": "npx supabase test db"
   },
   "dependencies": {
