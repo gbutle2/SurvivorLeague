@@ -6,11 +6,13 @@ alwaysApply: false
 
 # Database and security
 
-- Add new corrective SQL as a new migration; do not rewrite applied remote history without approval.
+- Prefer updating an unapplied migration in place when it has never been applied anywhere; otherwise add a new corrective migration. Do not rewrite applied remote history without approval.
 - Do not apply migrations to remote Supabase unless explicitly asked.
 - Prefer SECURITY DEFINER helpers with `SET search_path = public` for membership checks to avoid RLS recursion.
-- Players may change only `team_id` on their own picks before `locks_at`; `updated_at` stays database-controlled.
+- Pick identity fields (`id`, `user_id`, `week_id` / `playoff_round_id`, `submitted_at`) are immutable for all authenticated users, including commissioners. Check immutability before commissioner exceptions. Commissioner authority uses `OLD` week/round ids.
+- Players may change only `team_id` on their own picks before `locks_at`; insert/update timestamps are database-controlled.
 - Treat `locks_at <= now()` as locked (exact timestamp is locked).
-- Keep regular-season and playoff used-team lists separate.
+- Keep regular-season and playoff used-team lists separate; serialize reuse checks with namespaced advisory locks.
 - `teams` is migration-managed reference data; authenticated app users are read-only.
 - Never claim RLS is verified from reading SQL alone — run the database authorization tests when local Supabase is available.
+- Do not weaken application-table RLS to make tests pass; grant only the `tests` schema helpers to authenticated.

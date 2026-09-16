@@ -21,7 +21,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Enforce security in the server and database; never rely on UI-only controls.
 - Scoring must be centralized and deterministic when implemented.
 - UI must be mobile-first and accessible.
-- Before completion: lint, clean typecheck (`npm ci` then `npm run typecheck` without requiring a prior build), focused tests that exist, and production build.
+- Before completion: lint, clean typecheck (`npm ci` then `npm run typecheck`, which runs `next typegen` before `tsc`), focused tests that exist, and production build.
 - Handoffs must truthfully list checks actually run and migrations created versus applied.
 
 ## Agreed product rules

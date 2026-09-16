@@ -82,12 +82,14 @@ Open [http://localhost:3000](http://localhost:3000). Unauthenticated visitors ar
 
 ## Type checking
 
-Clean checkout (no prior `next build` required):
+Clean checkout:
 
 ```bash
 npm ci
 npm run typecheck
 ```
+
+`typecheck` runs `next typegen` first so route types exist without a full build. Do not commit `next-env.d.ts` (it is gitignored and regenerated).
 
 ## Lint
 
