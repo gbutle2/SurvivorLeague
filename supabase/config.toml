@@ -1,0 +1,10 @@
+# Minimal Supabase CLI config for this project.
+# Link a remote project with: npx supabase link --project-ref <ref>
+
+project_id = "survivor-league"
+
+[api]
+enabled = true
+
+[db]
+major_version = 15
