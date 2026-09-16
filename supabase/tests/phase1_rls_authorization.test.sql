@@ -120,8 +120,10 @@ BEGIN
   INSERT INTO public.weeks (id, season_id, week_number, label, locks_at, status) VALUES
     (v_week_open, v_season_a, 1, 'Week 1', now() + interval '2 days', 'open'),
     (v_week_locked, v_season_a, 2, 'Week 2 locked', now() - interval '1 hour', 'locked'),
-    (v_week_exact, v_season_a, 3, 'Week 3 exact', now(), 'open'),
-    (v_week2, v_season_a, 4, 'Week 4', now() + interval '3 days', 'open'),
+    -- locks_at = now() is locked by time; status is upcoming so only one open week per season.
+    (v_week_exact, v_season_a, 3, 'Week 3 exact', now(), 'upcoming'),
+    -- Unlocked by time for reuse tests; not open (weeks_one_open_per_season_idx).
+    (v_week2, v_season_a, 4, 'Week 4', now() + interval '3 days', 'upcoming'),
     (v_week_b, v_season_b, 1, 'League B Week 1', now() + interval '2 days', 'open');
 
   INSERT INTO public.playoff_rounds (id, season_id, round_number, name, points, locks_at, status) VALUES

@@ -4,7 +4,13 @@ import { revalidatePath } from "next/cache";
 
 import { authenticatedUserId } from "@/lib/auth/identity";
 import { loadLeagueContext } from "@/lib/league/context";
+import {
+  PICK_INSERT_ZERO_ROW,
+  PICK_UPDATE_ZERO_ROW,
+  requireMutationRow,
+} from "@/lib/mutations/result";
 import { mapPickMutationError } from "@/lib/picks/errors";
+import { setupSeasonBlocksPicks } from "@/lib/season/activation";
 import { createClient } from "@/lib/supabase/server";
 import { isLockedAt } from "@/lib/time/chicago";
 import { resolveOpenWeek } from "@/lib/weeks/open-week";
@@ -37,6 +43,14 @@ export async function savePick(
   }
 
   const { context } = contextResult;
+  if (setupSeasonBlocksPicks(context.season.status)) {
+    return {
+      ...empty,
+      error:
+        "The season is still in setup. Picks open after the commissioner activates the season.",
+    };
+  }
+
   const userId = authenticatedUserId(
     context.userId,
     String(formData.get("user_id") ?? "") || null,
@@ -114,25 +128,41 @@ export async function savePick(
       };
     }
 
-    const { error: updateError } = await supabase
+    const { data, error: updateError } = await supabase
       .from("picks")
       .update({ team_id: teamId })
       .eq("id", existing.id)
       .eq("user_id", userId)
-      .eq("week_id", week.id);
+      .eq("week_id", week.id)
+      .select("id, team_id")
+      .maybeSingle();
 
     if (updateError) {
       return { ...empty, error: mapPickMutationError(updateError) };
     }
+
+    const confirmed = requireMutationRow(data, PICK_UPDATE_ZERO_ROW);
+    if (!confirmed.ok) {
+      return { ...empty, error: confirmed.error };
+    }
   } else {
-    const { error: insertError } = await supabase.from("picks").insert({
-      week_id: week.id,
-      user_id: userId,
-      team_id: teamId,
-    });
+    const { data, error: insertError } = await supabase
+      .from("picks")
+      .insert({
+        week_id: week.id,
+        user_id: userId,
+        team_id: teamId,
+      })
+      .select("id, team_id")
+      .maybeSingle();
 
     if (insertError) {
       return { ...empty, error: mapPickMutationError(insertError) };
+    }
+
+    const confirmed = requireMutationRow(data, PICK_INSERT_ZERO_ROW);
+    if (!confirmed.ok) {
+      return { ...empty, error: confirmed.error };
     }
   }
 

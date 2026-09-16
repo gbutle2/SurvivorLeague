@@ -35,8 +35,8 @@ export default async function PickPage() {
       <AppShell title="Current Pick" subtitle={context.league.name}>
         <StatusPanel title="Season still in setup" tone="warning">
           <p>
-            The {context.season.year} season is still in setup. Picks open when
-            the commissioner marks a week open.
+            The {context.season.year} season is still in setup. Ask the
+            commissioner to activate the season before picks can be submitted.
           </p>
         </StatusPanel>
       </AppShell>

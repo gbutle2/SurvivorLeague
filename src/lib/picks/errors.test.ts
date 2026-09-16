@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { mapPickMutationError, mapWeekMutationError } from "./errors.ts";
+import {
+  mapOpenWeekUniqueViolation,
+  mapPickMutationError,
+  mapWeekMutationError,
+} from "./errors.ts";
 
 describe("mapPickMutationError", () => {
   it("maps reused-team errors", () => {
@@ -36,6 +40,17 @@ describe("mapWeekMutationError", () => {
     );
   });
 
+  it("maps the one-open-week unique index violation", () => {
+    assert.match(
+      mapWeekMutationError({
+        message:
+          'duplicate key value violates unique constraint "weeks_one_open_per_season_idx"',
+        code: "23505",
+      }),
+      /another week is already open/i,
+    );
+  });
+
   it("maps unauthorized week management", () => {
     assert.match(
       mapWeekMutationError({
@@ -43,6 +58,19 @@ describe("mapWeekMutationError", () => {
         code: "42501",
       }),
       /not authorized/i,
+    );
+  });
+});
+
+describe("mapOpenWeekUniqueViolation", () => {
+  it("provides friendly handling of the unique-index violation", () => {
+    assert.equal(
+      mapOpenWeekUniqueViolation({
+        code: "23505",
+        message:
+          'duplicate key value violates unique constraint "weeks_one_open_per_season_idx"',
+      }),
+      "Another week is already open. Lock it before opening this week.",
     );
   });
 });

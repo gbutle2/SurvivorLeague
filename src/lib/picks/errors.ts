@@ -60,10 +60,23 @@ export function mapWeekMutationError(error: DbErrorLike | null | undefined): str
     .toLowerCase();
 
   if (
-    haystack.includes("weeks_unique_season_week") ||
-    haystack.includes("duplicate key") ||
-    error.code === "23505"
+    haystack.includes("weeks_one_open_per_season_idx") ||
+    (error.code === "23505" && haystack.includes("one_open"))
   ) {
+    return "Another week is already open. Lock it before opening this week.";
+  }
+
+  if (
+    haystack.includes("weeks_unique_season_week") ||
+    (error.code === "23505" && haystack.includes("weeks_unique_season_week"))
+  ) {
+    return "That week number already exists for this season.";
+  }
+
+  if (error.code === "23505" && haystack.includes("duplicate key")) {
+    if (haystack.includes("open")) {
+      return "Another week is already open. Lock it before opening this week.";
+    }
     return "That week number already exists for this season.";
   }
 
@@ -80,4 +93,16 @@ export function mapWeekMutationError(error: DbErrorLike | null | undefined): str
   }
 
   return "Could not save the week. Please try again.";
+}
+
+/** Friendly mapping used by tests and callers for the open-week unique index. */
+export function mapOpenWeekUniqueViolation(
+  error: DbErrorLike | null | undefined,
+): string {
+  return mapWeekMutationError(
+    error ?? {
+      code: "23505",
+      message: 'duplicate key value violates unique constraint "weeks_one_open_per_season_idx"',
+    },
+  );
 }

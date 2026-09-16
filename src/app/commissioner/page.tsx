@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
-import { CreateWeekForm, WeekManagerCard } from "@/app/commissioner/week-manager";
+import {
+  ActivateSeasonForm,
+  CreateWeekForm,
+  WeekManagerCard,
+} from "@/app/commissioner/week-manager";
 import { listSeasonWeeks } from "@/app/commissioner/actions";
 import { AppShell } from "@/components/app-shell";
 import { LeagueContextError } from "@/components/league-context-error";
@@ -10,7 +14,12 @@ import {
   isCommissioner,
   loadLeagueContext,
 } from "@/lib/league/context";
+import { activationBlockedReason } from "@/lib/season/activation";
 import { formatCentralDateTime, isLockedAt } from "@/lib/time/chicago";
+import {
+  canEditWeekDetails,
+  presentWeekState,
+} from "@/lib/weeks/lifecycle";
 import { resolveOpenWeek } from "@/lib/weeks/open-week";
 
 export const metadata: Metadata = {
@@ -44,6 +53,14 @@ export default async function CommissionerPage() {
   const { context } = result;
   const { weeks, error: weeksError } = await listSeasonWeeks(context.season.id);
   const open = resolveOpenWeek(weeks);
+  const activationBlock =
+    context.season.status === "setup"
+      ? activationBlockedReason({
+          status: context.season.status,
+          hasScoringRules: Boolean(context.scoringRules),
+          weekCount: weeks.length,
+        })
+      : null;
 
   return (
     <AppShell
@@ -73,12 +90,11 @@ export default async function CommissionerPage() {
         </StatusPanel>
 
         {context.season.status === "setup" ? (
-          <StatusPanel title="Season still in setup" tone="warning">
-            <p>
-              You can create weeks now. Players will use the single week marked{" "}
-              <strong>open</strong>.
-            </p>
-          </StatusPanel>
+          <ActivateSeasonForm
+            year={context.season.year}
+            canActivate={activationBlock === null}
+            blockedReason={activationBlock}
+          />
         ) : null}
 
         {open.kind === "multiple" ? (
@@ -90,12 +106,22 @@ export default async function CommissionerPage() {
             </p>
           </StatusPanel>
         ) : open.kind === "ok" ? (
-          <StatusPanel title="Open for picks" tone="success">
-            <p>
-              Week {open.week.week_number}: {open.week.label}. Locks{" "}
-              {formatCentralDateTime(open.week.locks_at)}.
-            </p>
-          </StatusPanel>
+          isLockedAt(open.week.locks_at) ? (
+            <StatusPanel title="Open week deadline passed" tone="warning">
+              <p>
+                Week {open.week.week_number} is still marked open, but the
+                deadline ({formatCentralDateTime(open.week.locks_at)}) has
+                passed. Lock it when ready.
+              </p>
+            </StatusPanel>
+          ) : (
+            <StatusPanel title="Open for picks" tone="success">
+              <p>
+                Week {open.week.week_number}: {open.week.label}. Locks{" "}
+                {formatCentralDateTime(open.week.locks_at)}.
+              </p>
+            </StatusPanel>
+          )
         ) : (
           <StatusPanel title="No open week" tone="warning">
             <p>No week is currently open for player submissions.</p>
@@ -119,16 +145,28 @@ export default async function CommissionerPage() {
               <p>Create Week 1 to get started.</p>
             </StatusPanel>
           ) : (
-            weeks.map((week) => (
-              <WeekManagerCard
-                key={week.id}
-                week={{
-                  ...week,
-                  locksAtLabel: formatCentralDateTime(week.locks_at),
-                  editable: !isLockedAt(week.locks_at),
-                }}
-              />
-            ))
+            weeks.map((week) => {
+              const presentation = presentWeekState({
+                status: week.status,
+                locksAt: week.locks_at,
+              });
+              const editable =
+                canEditWeekDetails({
+                  status: week.status,
+                  locksAt: week.locks_at,
+                }) === null;
+              return (
+                <WeekManagerCard
+                  key={week.id}
+                  week={{
+                    ...week,
+                    locksAtLabel: formatCentralDateTime(week.locks_at),
+                    editable,
+                    presentation,
+                  }}
+                />
+              );
+            })
           )}
         </section>
       </div>
