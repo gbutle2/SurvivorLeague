@@ -8,12 +8,12 @@ CREATE EXTENSION IF NOT EXISTS pgtap;
 
 CREATE SCHEMA IF NOT EXISTS tests;
 
--- SECURITY DEFINER helpers owned by the migration/test runner role so they
--- can SET ROLE / RESET ROLE while remaining callable as authenticated.
+-- INVOKER helpers: switch JWT claims / role as the calling test role.
+-- Do not use SECURITY DEFINER here; application helpers remain separate.
 CREATE OR REPLACE FUNCTION tests.authenticate_as(p_user_id UUID)
 RETURNS VOID
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, tests
 AS $$
 BEGIN
@@ -33,7 +33,7 @@ $$;
 CREATE OR REPLACE FUNCTION tests.clear_auth()
 RETURNS VOID
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, tests
 AS $$
 BEGIN
