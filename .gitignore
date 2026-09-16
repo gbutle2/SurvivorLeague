@@ -31,8 +31,7 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files — never commit secrets or service-role credentials
-.env
-.env.*
+.env*
 !.env.example
 !.env*.example
 
