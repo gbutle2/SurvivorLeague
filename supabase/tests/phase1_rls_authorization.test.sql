@@ -162,6 +162,10 @@ BEGIN
 END;
 $$;
 
+-- Temp fixture table is created as the session owner; authenticated needs read access
+-- after SET ROLE. Do not touch application-table grants.
+GRANT SELECT ON test_ids TO authenticated;
+
 -- 1) Active player inserts own pick before lock
 SELECT tests.authenticate_as((SELECT player1 FROM test_ids));
 SELECT lives_ok(
@@ -210,6 +214,8 @@ SELECT throws_ok(
     (SELECT inactive FROM test_ids),
     (SELECT team_buf FROM test_ids)
   ),
+  '42501',
+  NULL,
   'inactive member cannot insert pick'
 );
 
@@ -223,17 +229,17 @@ VALUES (
   (SELECT team_det FROM test_ids)
 );
 SELECT tests.authenticate_as((SELECT inactive FROM test_ids));
+UPDATE public.picks
+SET team_id = (SELECT team_buf FROM test_ids)
+WHERE id = '99999999-9999-9999-9999-999999999902';
+SELECT tests.clear_auth();
 SELECT is(
   (
-    WITH u AS (
-      UPDATE public.picks
-      SET team_id = (SELECT team_buf FROM test_ids)
-      WHERE id = '99999999-9999-9999-9999-999999999902'
-      RETURNING 1
-    )
-    SELECT count(*)::integer FROM u
+    SELECT team_id
+    FROM public.picks
+    WHERE id = '99999999-9999-9999-9999-999999999902'
   ),
-  0,
+  (SELECT team_det FROM test_ids),
   'inactive member cannot update pick'
 );
 
@@ -246,6 +252,8 @@ SELECT throws_ok(
     (SELECT week_open FROM test_ids),
     (SELECT player1 FROM test_ids)
   ),
+  '42501',
+  NULL,
   'player cannot modify protected fields'
 );
 
@@ -258,6 +266,8 @@ SELECT throws_ok(
     (SELECT player1 FROM test_ids),
     (SELECT team_kc FROM test_ids)
   ),
+  '23514',
+  NULL,
   'player cannot reuse a regular-season team'
 );
 
@@ -282,6 +292,8 @@ SELECT throws_ok(
     (SELECT player1 FROM test_ids),
     (SELECT team_kc FROM test_ids)
   ),
+  '23514',
+  NULL,
   'player cannot reuse a playoff team'
 );
 
@@ -293,6 +305,8 @@ SELECT throws_ok(
     (SELECT round1 FROM test_ids),
     (SELECT player1 FROM test_ids)
   ),
+  '42501',
+  NULL,
   'player cannot set results or points'
 );
 
@@ -321,17 +335,17 @@ SELECT is(
 
 -- 13) Cross-league users cannot modify
 SELECT tests.authenticate_as((SELECT other_user FROM test_ids));
+UPDATE public.picks
+SET result = 'loss'
+WHERE id = (SELECT locked_pick_id FROM test_ids);
+SELECT tests.authenticate_as((SELECT player2 FROM test_ids));
 SELECT is(
   (
-    WITH u AS (
-      UPDATE public.picks
-      SET result = 'loss'
-      WHERE id = (SELECT locked_pick_id FROM test_ids)
-      RETURNING 1
-    )
-    SELECT count(*)::integer FROM u
+    SELECT result::text
+    FROM public.picks
+    WHERE id = (SELECT locked_pick_id FROM test_ids)
   ),
-  0,
+  'win',
   'cross-league users cannot modify data'
 );
 
@@ -345,18 +359,18 @@ SELECT ok(
 
 -- 15) Self-promotion to commissioner fails
 SELECT tests.authenticate_as((SELECT player2 FROM test_ids));
+UPDATE public.league_members
+SET role = 'commissioner'
+WHERE league_id = (SELECT league_a FROM test_ids)
+  AND user_id = (SELECT player2 FROM test_ids);
 SELECT is(
   (
-    WITH u AS (
-      UPDATE public.league_members
-      SET role = 'commissioner'
-      WHERE league_id = (SELECT league_a FROM test_ids)
-        AND user_id = (SELECT player2 FROM test_ids)
-      RETURNING 1
-    )
-    SELECT count(*)::integer FROM u
+    SELECT role::text
+    FROM public.league_members
+    WHERE league_id = (SELECT league_a FROM test_ids)
+      AND user_id = (SELECT player2 FROM test_ids)
   ),
-  0,
+  'player',
   'self-promotion to commissioner fails'
 );
 
@@ -376,6 +390,8 @@ SELECT lives_ok(
 SELECT tests.authenticate_as((SELECT commish FROM test_ids));
 SELECT throws_ok(
   'UPDATE public.teams SET city = ''Hacked'' WHERE abbreviation = ''KC''',
+  '42501',
+  NULL,
   'teams table is read-only for authenticated users'
 );
 
@@ -388,6 +404,8 @@ SELECT throws_ok(
     (SELECT player2 FROM test_ids),
     (SELECT team_buf FROM test_ids)
   ),
+  '42501',
+  NULL,
   'insert at exact lock timestamp is rejected'
 );
 
@@ -400,6 +418,8 @@ SELECT throws_ok(
     (SELECT week_open FROM test_ids),
     (SELECT player1 FROM test_ids)
   ),
+  '42501',
+  NULL,
   'player-commish dual role cannot move League A pick to League B'
 );
 
@@ -411,6 +431,8 @@ SELECT throws_ok(
     '99999999-9999-9999-9999-999999999999',
     (SELECT locked_pick_id FROM test_ids)
   ),
+  '42501',
+  NULL,
   'id is immutable'
 );
 
@@ -422,6 +444,8 @@ SELECT throws_ok(
     (SELECT player2 FROM test_ids),
     (SELECT locked_pick_id FROM test_ids)
   ),
+  '42501',
+  NULL,
   'user_id is immutable; commissioner cannot reassign pick'
 );
 
@@ -433,6 +457,8 @@ SELECT throws_ok(
     (SELECT week2 FROM test_ids),
     (SELECT locked_pick_id FROM test_ids)
   ),
+  '42501',
+  NULL,
   'week_id is immutable'
 );
 
@@ -444,30 +470,33 @@ SELECT throws_ok(
     '2020-01-01 00:00:00+00',
     (SELECT locked_pick_id FROM test_ids)
   ),
+  '42501',
+  NULL,
   'submitted_at is immutable'
 );
 
 -- 24) Insert submitted_at cannot be spoofed
 SELECT tests.authenticate_as((SELECT player2 FROM test_ids));
+INSERT INTO public.picks (
+  id, week_id, user_id, team_id, submitted_at, updated_at
+)
+VALUES (
+  '99999999-9999-9999-9999-999999999903',
+  (SELECT week_open FROM test_ids),
+  (SELECT player2 FROM test_ids),
+  (SELECT team_buf FROM test_ids),
+  '2020-01-01 00:00:00+00',
+  '2020-01-01 00:00:00+00'
+);
 SELECT ok(
   (
-    WITH inserted AS (
-      INSERT INTO public.picks (week_id, user_id, team_id, submitted_at, updated_at)
-      VALUES (
-        (SELECT week_open FROM test_ids),
-        (SELECT player2 FROM test_ids),
-        (SELECT team_buf FROM test_ids),
-        '2020-01-01 00:00:00+00',
-        '2020-01-01 00:00:00+00'
-      )
-      RETURNING submitted_at, updated_at
-    )
     SELECT
       submitted_at > timestamptz '2021-01-01'
       AND updated_at > timestamptz '2021-01-01'
       AND submitted_at > now() - interval '1 minute'
       AND updated_at > now() - interval '1 minute'
-    FROM inserted
+    FROM public.picks
+    WHERE id = '99999999-9999-9999-9999-999999999903'
   ),
   'player cannot spoof submitted_at or updated_at on insert'
 );
@@ -492,6 +521,8 @@ SELECT throws_ok(
     (SELECT round1 FROM test_ids),
     (SELECT player1 FROM test_ids)
   ),
+  '42501',
+  NULL,
   'playoff_round_id is immutable'
 );
 
