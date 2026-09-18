@@ -7,6 +7,7 @@ import {
   isCronNflSyncPath,
   isLoginPath,
   resolveForcedPasswordRedirect,
+  type SessionResponseCookie,
 } from "./auth-routing.ts";
 
 describe("exact auth route matching", () => {
@@ -134,41 +135,146 @@ describe("forced-route redirects", () => {
 });
 
 describe("cookie-preserving redirects", () => {
+  const sampleCookies: SessionResponseCookie[] = [
+    {
+      name: "sb-access-token",
+      value: "refreshed-access",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 3600,
+      priority: "high",
+    },
+    {
+      name: "sb-refresh-token",
+      value: "refreshed-refresh",
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      path: "/auth",
+      expires: new Date("2030-01-01T00:00:00.000Z"),
+      partitioned: true,
+      domain: "example.test",
+    },
+  ];
+
   for (const destination of ["/login", "/change-password", "/"] as const) {
-    it(`retains refreshed Supabase cookies for redirect category ${destination}`, () => {
-      const sourceCookies = [
-        { name: "sb-access-token", value: "refreshed-access" },
-        { name: "sb-refresh-token", value: "refreshed-refresh" },
-      ];
-      const written = new Map<string, string>();
+    it(`retains full cookie attributes for redirect category ${destination}`, () => {
+      const written: SessionResponseCookie[] = [];
       copySessionCookiesOnto(
-        { getAll: () => sourceCookies },
+        { getAll: () => sampleCookies },
         {
-          set: (name, value) => {
-            written.set(name, value);
+          set: (cookie) => {
+            written.push(cookie);
           },
         },
       );
-      assert.equal(written.get("sb-access-token"), "refreshed-access");
-      assert.equal(written.get("sb-refresh-token"), "refreshed-refresh");
+
+      assert.equal(written.length, 2);
+      assert.deepEqual(written[0], sampleCookies[0]);
+      assert.deepEqual(written[1], sampleCookies[1]);
+
+      // Fail if a name/value-only copy discarded security attributes.
+      assert.equal(written[0]?.httpOnly, true);
+      assert.equal(written[0]?.secure, true);
+      assert.equal(written[0]?.sameSite, "lax");
+      assert.equal(written[0]?.path, "/");
+      assert.equal(written[0]?.maxAge, 3600);
+      assert.equal(written[1]?.expires instanceof Date, true);
+      assert.equal(written[1]?.partitioned, true);
+      assert.equal(written[1]?.domain, "example.test");
       void destination;
     });
   }
 
-  it("copies response cookies, not request cookies", () => {
-    const written = new Map<string, string>();
+  it("copies multiple response cookies independently with attributes", () => {
+    const written: SessionResponseCookie[] = [];
     copySessionCookiesOnto(
+      { getAll: () => sampleCookies },
       {
-        getAll: () => [{ name: "sb-access-token", value: "from-response" }],
-      },
-      {
-        set: (name, value) => {
-          written.set(name, value);
+        set: (cookie) => {
+          written.push({ ...cookie });
         },
       },
     );
-    assert.equal(written.get("sb-access-token"), "from-response");
-    assert.equal(written.has("request-only"), false);
+    assert.equal(written[0]?.name, "sb-access-token");
+    assert.equal(written[0]?.value, "refreshed-access");
+    assert.equal(written[0]?.httpOnly, true);
+    assert.equal(written[0]?.secure, true);
+    assert.equal(written[0]?.sameSite, "lax");
+    assert.equal(written[0]?.path, "/");
+    assert.equal(written[0]?.maxAge, 3600);
+
+    assert.equal(written[1]?.name, "sb-refresh-token");
+    assert.equal(written[1]?.value, "refreshed-refresh");
+    assert.equal(written[1]?.httpOnly, true);
+    assert.equal(written[1]?.secure, true);
+    assert.equal(written[1]?.sameSite, "strict");
+    assert.equal(written[1]?.path, "/auth");
+    assert.equal(written[1]?.expires instanceof Date, true);
+    assert.equal(written[1]?.partitioned, true);
+  });
+
+  it("fails closed if only name and value were forwarded", () => {
+    // Simulate a broken writer that strips attributes — the helper must still
+    // hand the full object to set(); this assertion documents the contract.
+    let received: SessionResponseCookie | undefined;
+    copySessionCookiesOnto(
+      {
+        getAll: () => [
+          {
+            name: "sb-access-token",
+            value: "v",
+            httpOnly: true,
+            secure: true,
+            sameSite: "lax",
+            path: "/",
+            maxAge: 60,
+          },
+        ],
+      },
+      {
+        set: (cookie) => {
+          received = cookie;
+        },
+      },
+    );
+    assert.ok(received);
+    const keys = Object.keys(received!);
+    assert.ok(keys.includes("httpOnly"));
+    assert.ok(keys.includes("secure"));
+    assert.ok(keys.includes("sameSite"));
+    assert.ok(keys.includes("path"));
+    assert.ok(keys.includes("maxAge"));
+    assert.notDeepEqual(keys.sort(), ["name", "value"].sort());
+  });
+
+  it("copies response cookies, not request cookies", () => {
+    const written: SessionResponseCookie[] = [];
+    copySessionCookiesOnto(
+      {
+        getAll: () => [
+          {
+            name: "sb-access-token",
+            value: "from-response",
+            httpOnly: true,
+            path: "/",
+          },
+        ],
+      },
+      {
+        set: (cookie) => {
+          written.push(cookie);
+        },
+      },
+    );
+    assert.equal(written[0]?.value, "from-response");
+    assert.equal(written[0]?.httpOnly, true);
+    assert.equal(
+      written.some((cookie) => cookie.name === "request-only"),
+      false,
+    );
   });
 });
 

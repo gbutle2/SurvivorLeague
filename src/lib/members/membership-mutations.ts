@@ -76,12 +76,10 @@ export async function applyPlayerActiveUpdate(input: {
 }
 
 /**
- * Membership insert for a new player. Does not query or enforce active-member
- * capacity. Duplicate membership is rejected.
+ * Membership insert for a new player. Rejects duplicate membership only —
+ * there is no member-count parameter or check in this contract.
  */
 export async function addExclusivePlayerMembership(input: {
-  /** Optional observer used by tests — production never supplies a counter. */
-  observeCapacityQuery?: (label: string) => void;
   findExistingMembership: (args: {
     leagueId: string;
     userId: string;
@@ -92,13 +90,7 @@ export async function addExclusivePlayerMembership(input: {
   }) => Promise<{ error: { message: string } | null }>;
   leagueId: string;
   userId: string;
-  /** Present only so tests can prove capacity is ignored, never consulted. */
-  existingActiveMemberCount?: number;
 }): Promise<void> {
-  void input.existingActiveMemberCount;
-  // Capacity is intentionally not queried or enforced.
-  input.observeCapacityQuery?.("skipped");
-
   const existing = await input.findExistingMembership({
     leagueId: input.leagueId,
     userId: input.userId,
@@ -151,22 +143,27 @@ export type CompensationAdmin = {
 };
 
 /**
- * Failed-create compensation. Inspects returned `{ error }` objects (Supabase
- * does not throw on query failure). Deletes Auth user only when requested
- * (newly created in this request). Auth deletion is attempted even if
- * membership cleanup fails.
+ * Failed-create compensation. Survives returned `{ error }` objects and
+ * thrown/rejected membership or Auth cleanup operations. Deletes Auth user
+ * only when requested (newly created in this request). Auth deletion is
+ * attempted even if membership cleanup fails. Never rethrows cleanup failures
+ * (callers retain the original account-creation error).
  */
 export async function compensateFailedPlayerSetup(
   admin: CompensationAdmin,
   options: { leagueId: string; userId: string; deleteAuthUser: boolean },
 ): Promise<void> {
-  const { error: membershipError } = await admin
-    .from("league_members")
-    .delete()
-    .eq("league_id", options.leagueId)
-    .eq("user_id", options.userId);
+  try {
+    const { error: membershipError } = await admin
+      .from("league_members")
+      .delete()
+      .eq("league_id", options.leagueId)
+      .eq("user_id", options.userId);
 
-  if (membershipError) {
+    if (membershipError) {
+      logMemberError("compensation", "MEMBERSHIP_CLEANUP_FAILED");
+    }
+  } catch {
     logMemberError("compensation", "MEMBERSHIP_CLEANUP_FAILED");
   }
 
@@ -175,9 +172,13 @@ export async function compensateFailedPlayerSetup(
   }
 
   // Only delete Auth users we just created in this request — never a pre-existing user.
-  // Attempt Auth deletion even if membership cleanup returned an error (FK cascade may finish cleanup).
-  const { error } = await admin.auth.admin.deleteUser(options.userId);
-  if (error) {
+  // Attempt Auth deletion even if membership cleanup failed (FK cascade may finish cleanup).
+  try {
+    const { error } = await admin.auth.admin.deleteUser(options.userId);
+    if (error) {
+      logMemberError("compensation", "AUTH_DELETE_FAILED");
+    }
+  } catch {
     logMemberError("compensation", "AUTH_DELETE_FAILED");
   }
 }

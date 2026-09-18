@@ -21,8 +21,9 @@ export function redirectWithSessionCookies(
   url.search = "";
   const redirectResponse = NextResponse.redirect(url);
   copySessionCookiesOnto(supabaseResponse.cookies, {
-    set: (name, value) => {
-      redirectResponse.cookies.set(name, value);
+    set: (cookie) => {
+      // Use the ResponseCookie object overload so all attributes are retained.
+      redirectResponse.cookies.set(cookie);
     },
   });
   return redirectResponse;

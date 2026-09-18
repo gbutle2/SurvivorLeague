@@ -167,55 +167,70 @@ describe("member policy authorization", () => {
   });
 });
 
-describe("member-management service boundary (no capacity gate)", () => {
-  for (const existingActiveMemberCount of [6, 7, 20, 100]) {
-    it(`adds a player when the league already has ${existingActiveMemberCount} active members`, async () => {
-      const capacityQueries: string[] = [];
-      let inserted = false;
+describe("member-management service boundary (no member-count gate)", () => {
+  it("accepts only membership lookup and insert — no count parameter", async () => {
+    let lookupCalls = 0;
+    let insertCalls = 0;
 
+    await addExclusivePlayerMembership({
+      leagueId: "league-1",
+      userId: "new-player",
+      findExistingMembership: async () => {
+        lookupCalls += 1;
+        return null;
+      },
+      insertMembership: async () => {
+        insertCalls += 1;
+        return { error: null };
+      },
+    });
+
+    assert.equal(lookupCalls, 1);
+    assert.equal(insertCalls, 1);
+    assert.equal(
+      "existingActiveMemberCount" in addExclusivePlayerMembership,
+      false,
+    );
+  });
+
+  it("successful insertion is not conditional on league size", async () => {
+    // Call the same membership boundary repeatedly; there is no size input to gate on.
+    for (let i = 0; i < 4; i += 1) {
+      let inserted = false;
       await addExclusivePlayerMembership({
-        existingActiveMemberCount,
-        observeCapacityQuery: (label) => capacityQueries.push(label),
+        leagueId: "league-1",
+        userId: `player-${i}`,
         findExistingMembership: async () => null,
         insertMembership: async () => {
           inserted = true;
           return { error: null };
         },
-        leagueId: "league-1",
-        userId: "new-player",
       });
-
       assert.equal(inserted, true);
-      assert.deepEqual(capacityQueries, ["skipped"]);
-    });
-  }
+    }
+  });
 
-  it("does not query or enforce an active-member count during creation", async () => {
-    let countQueried = false;
+  it("performs only existing-membership lookup and insertion", async () => {
+    const ops: string[] = [];
     await addExclusivePlayerMembership({
-      existingActiveMemberCount: 100,
-      observeCapacityQuery: () => {
-        // Production never supplies a real counter; this label proves skip.
-      },
+      leagueId: "league-1",
+      userId: "player-x",
       findExistingMembership: async () => {
-        // Only duplicate lookup — not an active-count query.
+        ops.push("lookup");
         return null;
       },
       insertMembership: async () => {
-        countQueried = false;
+        ops.push("insert");
         return { error: null };
       },
-      leagueId: "league-1",
-      userId: "player-x",
     });
-    assert.equal(countQueried, false);
+    assert.deepEqual(ops, ["lookup", "insert"]);
   });
 
   it("rejects duplicate membership", async () => {
     await assert.rejects(
       () =>
         addExclusivePlayerMembership({
-          existingActiveMemberCount: 3,
           findExistingMembership: async () => ({ user_id: "player-1" }),
           insertMembership: async () => {
             throw new Error("insert must not run");
@@ -246,19 +261,51 @@ describe("member-management service boundary (no capacity gate)", () => {
     );
   });
 
-  it("reactivation path does not consult member capacity", async () => {
-    const supabase = mockActiveUpdateClient({
-      data: { user_id: "player-1", role: "player", active: true },
-      error: null,
-    });
-    // existingActiveMemberCount is irrelevant — applyPlayerActiveUpdate has no such input.
+  it("reactivation path has no member-count input", async () => {
     const updated = await applyPlayerActiveUpdate({
-      supabase,
+      supabase: mockActiveUpdateClient({
+        data: { user_id: "player-1", role: "player", active: true },
+        error: null,
+      }),
       leagueId: "league-1",
       targetUserId: "player-1",
       active: true,
     });
     assert.equal(updated.active, true);
+  });
+
+  it("member-management sources do not query an active-member count gate", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const root = join(import.meta.dirname);
+    const files = [
+      "membership-mutations.ts",
+      "manage.ts",
+      "policy.ts",
+      "validation.ts",
+      "password-change.ts",
+      "temp-password.ts",
+    ];
+    const forbidden = [
+      /existingActiveMemberCount/,
+      /observeCapacityQuery/,
+      /canAddOrReactivateActiveMember/,
+      /member[-_ ]?limit/i,
+      /MAX_ACTIVE_MEMBERS/,
+      /\.select\(\s*['"`].*\bcount\b/i,
+      /\{\s*count\s*:\s*['"`]exact['"`]/,
+      /\.count\s*\(/,
+    ];
+    for (const file of files) {
+      const source = readFileSync(join(root, file), "utf8");
+      for (const pattern of forbidden) {
+        assert.equal(
+          pattern.test(source),
+          false,
+          `${file} matched forbidden member-count pattern ${pattern}`,
+        );
+      }
+    }
   });
 });
 

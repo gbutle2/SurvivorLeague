@@ -251,7 +251,6 @@ export async function createPlayerAccount(input: {
       );
     }
 
-    // No active-member count query or capacity gate — membership insert only.
     await addExclusivePlayerMembership({
       leagueId: context.league.id,
       userId,

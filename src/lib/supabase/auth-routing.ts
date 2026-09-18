@@ -43,23 +43,44 @@ export function resolveForcedPasswordRedirect(input: {
   return null;
 }
 
+/**
+ * Cookie shape returned by Next.js `ResponseCookies.getAll()` / accepted by
+ * `ResponseCookies.set(cookie)`. Includes security attributes Supabase sets.
+ */
+export type SessionResponseCookie = {
+  name: string;
+  value: string;
+  path?: string;
+  domain?: string;
+  maxAge?: number;
+  expires?: Date | number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: true | false | "lax" | "strict" | "none";
+  priority?: "low" | "medium" | "high";
+  partitioned?: boolean;
+};
+
 type CookieReader = {
-  getAll: () => Array<{ name: string; value: string }>;
+  getAll: () => SessionResponseCookie[];
 };
 
 type CookieWriter = {
-  set: (name: string, value: string) => void;
+  /** Must accept the complete cookie object — not only name/value. */
+  set: (cookie: SessionResponseCookie) => void;
 };
 
 /**
  * Copy cookies Supabase attached to the session response onto another response
- * (e.g. a redirect). Does not copy request cookies.
+ * (e.g. a redirect). Passes each complete cookie object through so attributes
+ * such as httpOnly, secure, sameSite, path, domain, maxAge/expires, priority,
+ * and partitioned are preserved. Does not copy request cookies.
  */
 export function copySessionCookiesOnto(
   source: CookieReader,
   target: CookieWriter,
 ): void {
   for (const cookie of source.getAll()) {
-    target.set(cookie.name, cookie.value);
+    target.set(cookie);
   }
 }
