@@ -73,5 +73,6 @@ Single-week create remains only under **Exceptional: create a single week manual
 
 See also:
 
+- [`commissioner-member-management.md`](./commissioner-member-management.md) — in-app player account creation with temporary passwords
 - [`import-bootstrap.md`](./import-bootstrap.md) — admin bootstrap import (not run in Phase 2B-A)
 - [`phase2b-week1-week2-target.md`](./phase2b-week1-week2-target.md) — documented Week 1/2 target fields

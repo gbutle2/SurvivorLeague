@@ -58,11 +58,15 @@ Approved server-only schedule-sync variables:
 - `SUPABASE_DB_URL`, `POSTGRES_URL_NON_POOLING`, or `POSTGRES_URL`
 - `CRON_SECRET` or `SCHEDULE_SYNC_SECRET`
 
+Approved server-only Auth administration variable (commissioner member management):
+
+- `SUPABASE_SERVICE_ROLE_KEY`
+
 Security requirements:
 
 - Database URLs, passwords, service-role keys, secret keys, and cron secrets must never use a `NEXT_PUBLIC_` prefix.
 - Server-only database connections may be used only in server code running in the Node.js runtime.
 - The browser Supabase client must use only the project URL and publishable key.
 - Never expose database URLs or secret/service-role credentials to client components, browser bundles, logs, API responses, or source control.
-- Do not add `SUPABASE_SERVICE_ROLE_KEY` to application code when the direct server-only PostgreSQL connection is sufficient.
+- Use `SUPABASE_SERVICE_ROLE_KEY` only from `server-only` Auth Admin modules after cookie-session commissioner authorization — never as a substitute for requester checks, and never when a direct server-only PostgreSQL connection is sufficient for non-Auth work.
 - `.env.local` and Vercel secret values must remain untracked.

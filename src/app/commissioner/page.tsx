@@ -6,6 +6,7 @@ import { SyncNflScheduleForm } from "@/app/commissioner/schedule-sync-form";
 import { listSeasonWeeks } from "@/app/commissioner/actions";
 import { AppShell } from "@/components/app-shell";
 import { LeagueContextError } from "@/components/league-context-error";
+import { NavCard } from "@/components/nav-card";
 import { StatusPanel } from "@/components/status-panel";
 import {
   isCommissioner,
@@ -92,6 +93,12 @@ export default async function CommissionerPage() {
       subtitle={`${context.league.name} · ${context.season.year} season (${context.season.status})`}
     >
       <div className="space-y-4">
+        <NavCard
+          title="Members"
+          description="Create players, issue temporary passwords, and activate or deactivate memberships."
+          href="/commissioner/members"
+        />
+
         <StatusPanel title="Season" tone="neutral">
           <p>
             Status: <strong>{context.season.status}</strong>
