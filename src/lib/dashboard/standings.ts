@@ -57,6 +57,7 @@ export type SurvivorDecision = {
   decided: boolean;
   decidedAtWeekNumber: number | null;
   winnerUserIds: readonly string[];
+  weeksSurvivedByUser: ReadonlyMap<string, number>;
 };
 
 /**
@@ -111,9 +112,22 @@ function playoffPickFor(
   );
 }
 
+type SurvivorRun = {
+  userId: string;
+  /** Consecutive opening wins already locked in. */
+  weeksSurvived: number;
+  /** Maximum weeks this player can still reach. */
+  ceiling: number;
+  /** True once loss/tie/miss ends the run, or every competition week is graded. */
+  complete: boolean;
+  /** Last week number that contributed to (or ended) the run, when known. */
+  decidedAtWeekNumber: number | null;
+};
+
 /**
- * Deterministic survivor resolution: find the first week the competition ends.
- * Pending/ungraded picks never eliminate and block settlement for that week.
+ * Spreadsheet survivor rule (18-week calendar):
+ * bonus goes to everyone who survived the greatest number of weeks.
+ * 18-0 players each get the full bonus. Pending picks never eliminate or settle.
  */
 export function resolveSurvivorDecision(
   players: DashboardPlayer[],
@@ -121,58 +135,113 @@ export function resolveSurvivorDecision(
   picks: DashboardPick[],
 ): SurvivorDecision {
   const orderedWeeks = [...weeks].sort((a, b) => a.weekNumber - b.weekNumber);
-  const alive = new Set(players.map((player) => player.userId));
+  const empty = {
+    decided: false,
+    decidedAtWeekNumber: null as number | null,
+    winnerUserIds: [] as string[],
+    weeksSurvivedByUser: new Map<string, number>(),
+  };
 
-  if (alive.size === 0) {
-    return { decided: false, decidedAtWeekNumber: null, winnerUserIds: [] };
+  if (players.length === 0 || orderedWeeks.length === 0) {
+    return empty;
   }
+
+  const runs = players.map((player) =>
+    survivorRunFor(player.userId, orderedWeeks, picks),
+  );
+  const weeksSurvivedByUser = new Map(
+    runs.map((run) => [run.userId, run.weeksSurvived]),
+  );
+  const maxFloor = Math.max(0, ...runs.map((run) => run.weeksSurvived));
+  const contenders = runs.filter((run) => run.ceiling >= maxFloor);
+  const allComplete = runs.every((run) => run.complete);
+  const contendersLockedAtMax = contenders.every(
+    (run) => run.weeksSurvived === maxFloor,
+  );
+
+  if (!allComplete && !contendersLockedAtMax) {
+    return {
+      decided: false,
+      decidedAtWeekNumber: null,
+      winnerUserIds: [],
+      weeksSurvivedByUser,
+    };
+  }
+
+  const winners = runs
+    .filter((run) => run.weeksSurvived === maxFloor)
+    .map((run) => run.userId);
+  const decidedAtWeekNumber = Math.max(
+    0,
+    ...runs
+      .filter((run) => run.weeksSurvived === maxFloor)
+      .map((run) => run.decidedAtWeekNumber ?? 0),
+  );
+
+  return {
+    decided: true,
+    decidedAtWeekNumber: decidedAtWeekNumber || null,
+    winnerUserIds: winners,
+    weeksSurvivedByUser,
+  };
+}
+
+function survivorRunFor(
+  userId: string,
+  orderedWeeks: DashboardWeek[],
+  picks: DashboardPick[],
+): SurvivorRun {
+  let weeksSurvived = 0;
+  let decidedAtWeekNumber: number | null = null;
 
   for (let index = 0; index < orderedWeeks.length; index += 1) {
     const week = orderedWeeks[index]!;
+    const remainingIncludingCurrent = orderedWeeks.length - index;
+
     if (week.status !== "final") {
-      return { decided: false, decidedAtWeekNumber: null, winnerUserIds: [] };
-    }
-
-    for (const userId of alive) {
-      if (resultFor(picks, userId, week.id) === "pending") {
-        return { decided: false, decidedAtWeekNumber: null, winnerUserIds: [] };
-      }
-    }
-
-    const aliveAtWeekStart = [...alive];
-    for (const userId of aliveAtWeekStart) {
-      const result = resultFor(picks, userId, week.id);
-      if (result === "win") continue;
-      alive.delete(userId);
-    }
-
-    if (alive.size === 1) {
       return {
-        decided: true,
-        decidedAtWeekNumber: week.weekNumber,
-        winnerUserIds: [...alive],
+        userId,
+        weeksSurvived,
+        ceiling: weeksSurvived + remainingIncludingCurrent,
+        complete: false,
+        decidedAtWeekNumber,
       };
     }
 
-    if (alive.size === 0) {
+    const result = resultFor(picks, userId, week.id);
+    if (result === "pending") {
       return {
-        decided: true,
-        decidedAtWeekNumber: week.weekNumber,
-        winnerUserIds: aliveAtWeekStart,
+        userId,
+        weeksSurvived,
+        ceiling: weeksSurvived + remainingIncludingCurrent,
+        complete: false,
+        decidedAtWeekNumber,
       };
     }
 
-    const isFinalCompetitionWeek = index === orderedWeeks.length - 1;
-    if (isFinalCompetitionWeek) {
-      return {
-        decided: true,
-        decidedAtWeekNumber: week.weekNumber,
-        winnerUserIds: [...alive],
-      };
+    if (result === "win") {
+      weeksSurvived += 1;
+      decidedAtWeekNumber = week.weekNumber;
+      continue;
     }
+
+    // loss, tie, or miss ends the survivor run; locked weeksSurvived stands.
+    return {
+      userId,
+      weeksSurvived,
+      ceiling: weeksSurvived,
+      complete: true,
+      decidedAtWeekNumber: week.weekNumber,
+    };
   }
 
-  return { decided: false, decidedAtWeekNumber: null, winnerUserIds: [] };
+  return {
+    userId,
+    weeksSurvived,
+    ceiling: weeksSurvived,
+    complete: true,
+    decidedAtWeekNumber,
+  };
 }
 
 /**
@@ -321,6 +390,10 @@ export function buildRegularStandings(
   const orderedWeeks = [...weeks].sort((a, b) => a.weekNumber - b.weekNumber);
   const survivor = resolveSurvivorDecision(players, orderedWeeks, picks);
   const survivorWinners = new Set(survivor.winnerUserIds);
+  const runs = players.map((player) =>
+    survivorRunFor(player.userId, orderedWeeks, picks),
+  );
+  const maxSurvivorFloor = Math.max(0, ...runs.map((run) => run.weeksSurvived));
 
   const tallies = players.map((player) => {
     const playoffPoints = sumPlayoffPointsForUser(player.userId, playoffPicks);
@@ -383,8 +456,11 @@ export function buildRegularStandings(
         );
       }
 
-      if (!survivor.decided && player.survivorAlive) {
-        possibleBonuses += rules.survivorBonus;
+      if (!survivor.decided) {
+        const run = runs.find((entry) => entry.userId === player.userId);
+        if (run && run.ceiling >= maxSurvivorFloor) {
+          possibleBonuses += rules.survivorBonus;
+        }
       }
 
       return {

@@ -71,7 +71,7 @@ Do not create weeks one-by-one for a normal season.
 
 Single-week create remains only under **Exceptional: create a single week manually**.
 
-Default scoring for new seasons: weekly win 1; bonuses 3 / 3 / 5; playoffs 1 / 2 / 3 / 4 (max 10); perfect season 18-0.
+Default scoring for new seasons: weekly win 1; bonuses 4 / 4 / 10; playoffs 2 / 4 / 6 / 12 (max 24); perfect season 18-0; overall maximum 60.
 
 See also:
 

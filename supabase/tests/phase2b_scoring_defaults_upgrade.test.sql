@@ -1,6 +1,6 @@
 -- Safety coverage for 20260918220000_authoritative_scoring_defaults.sql
--- Proves 17→18 restoration, 18-week no-op, customized scoring preservation,
--- and that Week 18 / picks are never deleted.
+-- Proves temporary 3/3/5 + 1/2/3/4 undo, 4/4/10 no-op, custom preservation,
+-- 17→18 restore, and that Week 18 / picks are never deleted.
 BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgtap;
@@ -11,8 +11,8 @@ DO $$
 DECLARE
   v_league UUID := 'cccccccc-cccc-cccc-cccc-cccccccccf01';
   v_commish UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaf01';
-  v_season17 UUID := 'dddddddd-dddd-dddd-dddd-dddddddddf01';
-  v_season18 UUID := 'dddddddd-dddd-dddd-dddd-dddddddddf02';
+  v_season_temp UUID := 'dddddddd-dddd-dddd-dddd-dddddddddf01';
+  v_season_ok UUID := 'dddddddd-dddd-dddd-dddd-dddddddddf02';
   v_season_custom UUID := 'dddddddd-dddd-dddd-dddd-dddddddddf03';
   v_week18 UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeef18';
   v_pick UUID := '99999999-9999-9999-9999-9999999999f1';
@@ -35,8 +35,8 @@ BEGIN
   VALUES (v_league, v_commish, 'commissioner', true);
 
   INSERT INTO public.seasons (id, league_id, year, status, regular_week_count) VALUES
-    (v_season17, v_league, 2091, 'active', 17),
-    (v_season18, v_league, 2092, 'active', 18),
+    (v_season_temp, v_league, 2091, 'active', 17),
+    (v_season_ok, v_league, 2092, 'active', 18),
     (v_season_custom, v_league, 2093, 'active', 18);
 
   INSERT INTO public.scoring_rules (
@@ -44,15 +44,17 @@ BEGIN
     best_record_bonus, longest_streak_bonus, survivor_bonus,
     wildcard_points, divisional_points, conference_points, superbowl_points
   ) VALUES
-    (v_season17, 1, 4, 4, 10, 2, 4, 6, 12),
-    (v_season18, 1, 3, 3, 5, 1, 2, 3, 4),
+    (v_season_temp, 1, 3, 3, 5, 1, 2, 3, 4),
+    (v_season_ok, 1, 4, 4, 10, 2, 4, 6, 12),
     (v_season_custom, 1, 9, 8, 7, 5, 5, 5, 5);
 
   INSERT INTO public.playoff_rounds (
     season_id, round_number, round_code, name, points, locks_at, status
   ) VALUES
-    (v_season17, 1, 'wildcard', 'Wild Card', 2, now() + interval '30 days', 'upcoming'),
-    (v_season17, 2, 'divisional', 'Divisional', 4, now() + interval '37 days', 'upcoming'),
+    (v_season_temp, 1, 'wildcard', 'Wild Card', 1, now() + interval '30 days', 'upcoming'),
+    (v_season_temp, 2, 'divisional', 'Divisional', 2, now() + interval '37 days', 'upcoming'),
+    (v_season_temp, 3, 'conference', 'Conference', 3, now() + interval '44 days', 'upcoming'),
+    (v_season_temp, 4, 'superbowl', 'Super Bowl', 4, now() + interval '51 days', 'upcoming'),
     (v_season_custom, 1, 'wildcard', 'Wild Card', 9, now() + interval '30 days', 'upcoming');
 
   SELECT id INTO v_team FROM public.teams WHERE abbreviation = 'KC';
@@ -67,27 +69,27 @@ BEGIN
   );
 
   INSERT INTO public.weeks (id, season_id, week_number, label, locks_at, status)
-  VALUES (v_week18, v_season17, 18, 'Week 18', now() + interval '1 day', 'upcoming');
+  VALUES (v_week18, v_season_temp, 18, 'Week 18', now() + interval '1 day', 'upcoming');
 
   INSERT INTO public.picks (id, week_id, user_id, team_id, result)
   VALUES (v_pick, v_week18, v_commish, v_team, 'pending');
 END;
 $$;
 
--- Re-apply the not-yet-remote migration body against the fixture state.
--- The test container does not mount ../migrations, so the upgrade path is
--- re-executed inline rather than via \ir.
+-- Inline re-application of unpublished 20260918220000 body.
 ALTER TABLE public.seasons
   ALTER COLUMN regular_week_count SET DEFAULT 18;
 
 ALTER TABLE public.scoring_rules
-  ALTER COLUMN best_record_bonus SET DEFAULT 3,
-  ALTER COLUMN longest_streak_bonus SET DEFAULT 3,
-  ALTER COLUMN survivor_bonus SET DEFAULT 5,
-  ALTER COLUMN wildcard_points SET DEFAULT 1,
-  ALTER COLUMN divisional_points SET DEFAULT 2,
-  ALTER COLUMN conference_points SET DEFAULT 3,
-  ALTER COLUMN superbowl_points SET DEFAULT 4;
+  ALTER COLUMN correct_regular_pick_points SET DEFAULT 1,
+  ALTER COLUMN best_record_bonus SET DEFAULT 4,
+  ALTER COLUMN longest_streak_bonus SET DEFAULT 4,
+  ALTER COLUMN survivor_bonus SET DEFAULT 10,
+  ALTER COLUMN wildcard_points SET DEFAULT 2,
+  ALTER COLUMN divisional_points SET DEFAULT 4,
+  ALTER COLUMN conference_points SET DEFAULT 6,
+  ALTER COLUMN superbowl_points SET DEFAULT 12,
+  ALTER COLUMN perfect_season_override SET DEFAULT true;
 
 UPDATE public.seasons
 SET regular_week_count = 18
@@ -95,36 +97,38 @@ WHERE regular_week_count = 17;
 
 UPDATE public.scoring_rules
 SET
-  best_record_bonus = 3,
-  longest_streak_bonus = 3,
-  survivor_bonus = 5,
-  wildcard_points = 1,
-  divisional_points = 2,
-  conference_points = 3,
-  superbowl_points = 4
-WHERE best_record_bonus = 4
-  AND longest_streak_bonus = 4
-  AND survivor_bonus = 10
-  AND wildcard_points = 2
-  AND divisional_points = 4
-  AND conference_points = 6
-  AND superbowl_points = 12;
-
-UPDATE public.playoff_rounds
-SET points = 1
-WHERE round_code = 'wildcard' AND points = 2;
+  correct_regular_pick_points = 1,
+  best_record_bonus = 4,
+  longest_streak_bonus = 4,
+  survivor_bonus = 10,
+  wildcard_points = 2,
+  divisional_points = 4,
+  conference_points = 6,
+  superbowl_points = 12,
+  perfect_season_override = true
+WHERE best_record_bonus = 3
+  AND longest_streak_bonus = 3
+  AND survivor_bonus = 5
+  AND wildcard_points = 1
+  AND divisional_points = 2
+  AND conference_points = 3
+  AND superbowl_points = 4;
 
 UPDATE public.playoff_rounds
 SET points = 2
-WHERE round_code = 'divisional' AND points = 4;
-
-UPDATE public.playoff_rounds
-SET points = 3
-WHERE round_code = 'conference' AND points = 6;
+WHERE round_code = 'wildcard' AND points = 1;
 
 UPDATE public.playoff_rounds
 SET points = 4
-WHERE round_code = 'superbowl' AND points = 12;
+WHERE round_code = 'divisional' AND points = 2;
+
+UPDATE public.playoff_rounds
+SET points = 6
+WHERE round_code = 'conference' AND points = 3;
+
+UPDATE public.playoff_rounds
+SET points = 12
+WHERE round_code = 'superbowl' AND points = 4;
 
 SELECT is(
   (SELECT regular_week_count FROM public.seasons WHERE id = 'dddddddd-dddd-dddd-dddd-dddddddddf01'),
@@ -133,39 +137,40 @@ SELECT is(
 );
 
 SELECT is(
-  (SELECT regular_week_count FROM public.seasons WHERE id = 'dddddddd-dddd-dddd-dddd-dddddddddf02'),
-  18,
-  'existing 18-week seasons remain 18'
-);
-
-SELECT is(
   (SELECT best_record_bonus FROM public.scoring_rules WHERE season_id = 'dddddddd-dddd-dddd-dddd-dddddddddf01'),
-  3,
-  'legacy best-record bonus becomes 3'
+  4,
+  'temporary 3/3/5 best-record becomes 4'
 );
 
 SELECT is(
   (SELECT survivor_bonus FROM public.scoring_rules WHERE season_id = 'dddddddd-dddd-dddd-dddd-dddddddddf01'),
-  5,
-  'legacy survivor bonus becomes 5'
+  10,
+  'temporary survivor bonus becomes 10'
 );
 
 SELECT is(
   (SELECT wildcard_points FROM public.scoring_rules WHERE season_id = 'dddddddd-dddd-dddd-dddd-dddddddddf01'),
-  1,
-  'legacy wildcard points become 1'
+  2,
+  'temporary wildcard points become 2'
+);
+
+SELECT is(
+  (SELECT points FROM public.playoff_rounds
+   WHERE season_id = 'dddddddd-dddd-dddd-dddd-dddddddddf01' AND round_code = 'superbowl'),
+  12,
+  'temporary superbowl round points become 12'
 );
 
 SELECT is(
   (SELECT best_record_bonus FROM public.scoring_rules WHERE season_id = 'dddddddd-dddd-dddd-dddd-dddddddddf02'),
-  3,
-  'already-correct best-record bonus stays 3'
+  4,
+  'already-correct 4/4/10 scoring stays unchanged'
 );
 
 SELECT is(
   (SELECT best_record_bonus FROM public.scoring_rules WHERE season_id = 'dddddddd-dddd-dddd-dddd-dddddddddf03'),
   9,
-  'customized best-record bonus is preserved'
+  'customized scoring rows are preserved'
 );
 
 SELECT is(

@@ -7,11 +7,15 @@ export function isPerfectRegularSeason(wins: number, weekCount = 18): boolean {
 }
 
 export function playoffPointsTotal(roundWins: number[]): number {
-  const table = [1, 2, 3, 4];
+  const table = [2, 4, 6, 12];
   return roundWins.reduce(
     (sum, won, index) => sum + (won ? table[index]! : 0),
     0,
   );
+}
+
+export function overallMaximumPoints(): number {
+  return 18 + 4 + 4 + 10 + 24;
 }
 
 describe("scoring defaults (18-week season)", () => {
@@ -20,8 +24,12 @@ describe("scoring defaults (18-week season)", () => {
     assert.equal(isPerfectRegularSeason(18), true);
   });
 
-  it("playoff maximum is 10", () => {
-    assert.equal(playoffPointsTotal([1, 1, 1, 1]), 10);
-    assert.equal(playoffPointsTotal([1, 1, 0, 0]), 3);
+  it("playoff maximum is 24", () => {
+    assert.equal(playoffPointsTotal([1, 1, 1, 1]), 24);
+    assert.equal(playoffPointsTotal([1, 1, 0, 0]), 6);
+  });
+
+  it("overall maximum is 60", () => {
+    assert.equal(overallMaximumPoints(), 60);
   });
 });

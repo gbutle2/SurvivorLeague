@@ -605,10 +605,10 @@ export async function syncNflSchedule(
         name: string;
         points: number;
       }> = [
-        { number: 1, code: "wildcard", name: "Wild Card", points: 1 },
-        { number: 2, code: "divisional", name: "Divisional", points: 2 },
-        { number: 3, code: "conference", name: "Conference", points: 3 },
-        { number: 4, code: "superbowl", name: "Super Bowl", points: 4 },
+        { number: 1, code: "wildcard", name: "Wild Card", points: 2 },
+        { number: 2, code: "divisional", name: "Divisional", points: 4 },
+        { number: 3, code: "conference", name: "Conference", points: 6 },
+        { number: 4, code: "superbowl", name: "Super Bowl", points: 12 },
       ];
 
       for (const round of roundDefs) {

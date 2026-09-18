@@ -9,10 +9,11 @@ alwaysApply: true
 - Eliminated players continue making weekly picks for points.
 - Win = 1 point; loss or tie = 0.
 - Missed pick is not a win, breaks streak, and eliminates from regular survivor.
-- Bonuses: best record 3, longest streak 3, regular survivor winner 5; tied leaders each get the full bonus.
-- Regular survivor ends when exactly one player remains alive; that winner keeps the bonus even after later losses. Same-week wipeouts and end-of-season multi-survivor fields are full-bonus ties.
+- Bonuses: best record 4, longest streak 4, regular survivor winner 10; tied leaders each get the full bonus.
+- Survivor bonus goes to every player who survives the greatest number of weeks (all 18-0 players; otherwise the longest survivor streak(s)). Pending picks never eliminate or settle survivor.
 - One 18-0 player wins overall; multiple 18-0 players use playoff survivor as tiebreak.
-- Playoffs are a separate survivor with a fresh used-team list; points 1 / 2 / 3 / 4 (max 10).
+- Playoffs are a separate survivor with a fresh used-team list; points 2 / 4 / 6 / 12 (max 24).
+- Overall maximum is 60 points (18 weekly + 18 bonuses + 24 playoff).
 - A missed pick in a completed playoff round eliminates that player from playoff survivor.
 - Timezone: Central Time.
 - Other players’ picks stay hidden until the relevant kickoff.

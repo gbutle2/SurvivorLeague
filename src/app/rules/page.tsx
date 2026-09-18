@@ -41,11 +41,12 @@ export default async function RulesPage() {
           <RuleRow label="Tied leaders" value="Each tied leader receives the full bonus" />
         </RuleSection>
         <RuleSection title="Regular survivor resolution">
-          <RuleRow label="Ends early" value="As soon as exactly one player remains alive" />
-          <RuleRow label="Early winner" value="Keeps the survivor bonus even after later weekly losses" />
-          <RuleRow label="Same-week wipeout" value="All players eliminated that week tie and each receive the full bonus" />
-          <RuleRow label="Season-long survivors" value="Everyone still alive after the final regular week ties for the full bonus" />
-          <RuleRow label="Elimination" value="Loss, tie, or missed pick; pending picks never eliminate" />
+          <RuleRow label="Winner" value="Every player who survives the greatest number of weeks" />
+          <RuleRow label="Perfect survivors" value="Every 18-0 player receives the full survivor bonus" />
+          <RuleRow label="No perfect survivors" value="Longest survivor streak(s) each receive the full bonus" />
+          <RuleRow label="Ties" value="Tied leaders each receive the full bonus; the bonus is never split" />
+          <RuleRow label="Elimination" value="Loss, tie, or missed pick; pending picks never eliminate or settle" />
+          <RuleRow label="After elimination" value="Keep making weekly picks for regular points" />
         </RuleSection>
         <RuleSection title="Playoff survivor">
           <RuleRow label="Team use" value="Fresh used-team list for the playoffs" />
@@ -54,6 +55,7 @@ export default async function RulesPage() {
           <RuleRow label="Conference" value={`${rules.conferencePoints} points`} />
           <RuleRow label="Super Bowl" value={`${rules.superbowlPoints} points`} />
           <RuleRow label="Maximum" value={`${playoffMaximum} points`} />
+          <RuleRow label="Overall maximum" value={`${context.season.regularWeekCount * rules.correctRegularPickPoints + rules.bestRecordBonus + rules.longestStreakBonus + rules.survivorBonus + playoffMaximum} points`} />
           <RuleRow label="Missed round" value="No pick in a completed playoff round eliminates from playoff survivor" />
         </RuleSection>
         <RuleSection title="Winner and pick visibility">
