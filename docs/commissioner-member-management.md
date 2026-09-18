@@ -39,10 +39,12 @@ Players cannot clear the flag with the browser Supabase client (`app_metadata` i
 - Commissioners cannot deactivate themselves or other commissioners here.
 - Reactivation does not reset passwords.
 
-## Limits and conflicts
+## Conflicts
 
 - Duplicate Auth emails return a safe conflict (no silent attach of a pre-existing user).
+- Duplicate league membership for the same user is rejected.
 - Role is always `player` for created accounts; no self-promotion via this UI.
+- There is no fixed active-member capacity limit.
 
 ## Local testing
 

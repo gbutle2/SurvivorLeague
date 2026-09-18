@@ -1,5 +1,7 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import {
   createPlayerAccount,
   listLeagueMembers,
@@ -24,6 +26,12 @@ const empty: MembersActionState = {
   createdDisplayName: null,
 };
 
+const MEMBERS_PATH = "/commissioner/members";
+
+function refreshMembersPage(): void {
+  revalidatePath(MEMBERS_PATH);
+}
+
 export async function loadMembersForPage() {
   return listLeagueMembers();
 }
@@ -43,6 +51,9 @@ export async function createPlayerAction(
       displayName: String(formData.get("display_name") ?? ""),
       leagueId: String(formData.get("league_id") ?? "") || null,
     });
+
+    // Revalidate list/count; return value still carries the one-time password.
+    refreshMembersPage();
 
     return {
       error: null,
@@ -76,6 +87,9 @@ export async function resetPasswordAction(
     const targetUserId = String(formData.get("user_id") ?? "");
     const result = await resetPlayerTemporaryPassword({ targetUserId });
 
+    // Password status flips to temporary — refresh the member list.
+    refreshMembersPage();
+
     return {
       error: null,
       success:
@@ -105,6 +119,7 @@ export async function deactivateMemberAction(
       targetUserId: String(formData.get("user_id") ?? ""),
       active: false,
     });
+    refreshMembersPage();
     return {
       ...empty,
       success:
@@ -124,6 +139,7 @@ export async function reactivateMemberAction(
       targetUserId: String(formData.get("user_id") ?? ""),
       active: true,
     });
+    refreshMembersPage();
     return {
       ...empty,
       success: "Player reactivated. Password was not changed.",

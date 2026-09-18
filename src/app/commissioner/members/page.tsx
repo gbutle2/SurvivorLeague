@@ -67,10 +67,7 @@ export default async function CommissionerMembersPage() {
       backHref="/commissioner"
       backLabel="Commissioner"
     >
-      <MembersManager
-        members={members}
-        activeCount={activeCount}
-      />
+      <MembersManager members={members} activeCount={activeCount} />
     </AppShell>
   );
 }
