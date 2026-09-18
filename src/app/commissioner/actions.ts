@@ -519,7 +519,7 @@ export async function activateSeason(
   return {
     error: null,
     success:
-      "Season activated. Players can submit picks once a week is marked open.",
+      "Season activated. The current week advances automatically by deadline; players can submit picks for the effective current week.",
   };
 }
 

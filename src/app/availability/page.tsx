@@ -52,9 +52,7 @@ export default async function AvailabilityPage() {
   const weekIds = weeks.map((week) => week.id);
   const current = resolveCurrentWeek(weeks);
   const openWeekId =
-    current.kind === "actionable" || current.kind === "open_expired"
-      ? current.week.id
-      : null;
+    current.kind === "actionable" ? current.week.id : null;
 
   const [{ data: teams, error: teamsError }, { data: picks, error: picksError }] =
     await Promise.all([
@@ -103,12 +101,13 @@ export default async function AvailabilityPage() {
       title="Team Availability"
       subtitle="Your regular-season teams only — other players’ picks stay hidden until lock."
     >
-      {current.kind === "multiple_open" ? (
+      {current.kind === "actionable" &&
+      current.multipleOpenWarning.length > 1 ? (
         <div className="mb-3">
-          <StatusPanel title="Multiple open weeks" tone="danger">
+          <StatusPanel title="Commissioner notice" tone="warning">
             <p>
-              Week configuration is invalid. Availability still shows your used
-              teams, but current-week highlighting may be incomplete.
+              Multiple weeks are stored as open. Current-week highlighting uses
+              Week {current.week.week_number} (earliest eligible).
             </p>
           </StatusPanel>
         </div>

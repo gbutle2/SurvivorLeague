@@ -100,9 +100,9 @@ export function ActivateSeasonForm({
         Activate {year} season
       </h2>
       <p className="text-sm leading-relaxed text-amber-950">
-        Activation moves the season from setup to active and enables player pick
-        submission once a week is marked open. This cannot be undone from the
-        app.
+        Activation moves the season from setup to active. Players can then
+        submit picks for the effective current week, which advances
+        automatically by deadline. This cannot be undone from the app.
       </p>
       {!canActivate && blockedReason ? (
         <p className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-amber-950">
@@ -249,10 +249,10 @@ export function WeekManagerCard({ week }: { week: WeekCardModel }) {
         <span className="font-medium">Locks:</span> {week.locksAtLabel}
       </p>
 
-      {week.presentation.kind === "open_expired" ? (
+      {week.presentation.kind === "deadline_passed" ? (
         <p className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-amber-950">
-          The deadline has passed. Lock this week when you are ready; it cannot
-          be reopened after locking.
+          The deadline has passed. Lock this week when you are ready; it is
+          already skipped for player picks.
         </p>
       ) : null}
 
@@ -314,20 +314,6 @@ export function WeekManagerCard({ week }: { week: WeekCardModel }) {
 
       {(showOpen || showLock) && (
         <div className="flex flex-col gap-2 border-t border-stone-200/70 pt-3">
-          {showOpen ? (
-            <form action={statusAction}>
-              <input type="hidden" name="week_id" value={week.id} />
-              <input type="hidden" name="status" value="open" />
-              <button
-                type="submit"
-                disabled={statusPending}
-                className={primaryButtonClass}
-              >
-                {statusPending ? "Opening…" : "Mark open for picks"}
-              </button>
-            </form>
-          ) : null}
-
           {showLock ? (
             <form action={statusAction} className="space-y-2">
               <input type="hidden" name="week_id" value={week.id} />
@@ -341,16 +327,42 @@ export function WeekManagerCard({ week }: { week: WeekCardModel }) {
                   onChange={(event) => setConfirmLock(event.target.checked)}
                   className="mt-1 h-5 w-5"
                 />
-                <span>I confirm locking Week {week.week_number}.</span>
+                <span>
+                  I confirm locking Week {week.week_number}
+                  {week.status === "upcoming" ? " early" : ""}.
+                </span>
               </label>
               <button
                 type="submit"
                 disabled={statusPending || !confirmLock}
                 className={dangerButtonClass}
               >
-                {statusPending ? "Locking…" : "Close / lock week"}
+                {statusPending ? "Locking…" : "Lock week"}
               </button>
             </form>
+          ) : null}
+
+          {showOpen ? (
+            <details className="rounded-lg border border-stone-300 bg-stone-50 p-3">
+              <summary className="min-h-11 cursor-pointer text-sm font-semibold text-stone-800">
+                Exceptional: mark stored status open
+              </summary>
+              <p className="mt-2 text-sm text-stone-600">
+                Not required for routine weeks. Current-week eligibility is
+                deadline-based. Use only for legacy/open-status corrections.
+              </p>
+              <form action={statusAction} className="mt-2">
+                <input type="hidden" name="week_id" value={week.id} />
+                <input type="hidden" name="status" value="open" />
+                <button
+                  type="submit"
+                  disabled={statusPending}
+                  className={secondaryButtonClass}
+                >
+                  {statusPending ? "Saving…" : "Set status to open"}
+                </button>
+              </form>
+            </details>
           ) : null}
 
           <Feedback state={statusState} />

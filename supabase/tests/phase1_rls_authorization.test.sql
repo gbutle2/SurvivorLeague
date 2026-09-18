@@ -260,6 +260,13 @@ SELECT throws_ok(
 );
 
 -- 7) Player cannot reuse a regular-season team
+-- Make Week 1 ineligible so Week 4 becomes the effective current week, then
+-- attempt reuse (player1 already used KC on Week 1). Restore Week 1 afterward.
+SELECT tests.clear_auth();
+UPDATE public.weeks
+SET status = 'final', locks_at = now() - interval '2 days'
+WHERE id = (SELECT week_open FROM test_ids);
+
 SELECT tests.authenticate_as((SELECT player1 FROM test_ids));
 SELECT throws_ok(
   format(
@@ -272,6 +279,11 @@ SELECT throws_ok(
   NULL,
   'player cannot reuse a regular-season team'
 );
+
+SELECT tests.clear_auth();
+UPDATE public.weeks
+SET status = 'open', locks_at = now() + interval '2 days'
+WHERE id = (SELECT week_open FROM test_ids);
 
 -- 8) Regular/playoff lists separate
 SELECT tests.authenticate_as((SELECT player1 FROM test_ids));

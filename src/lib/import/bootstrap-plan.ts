@@ -125,11 +125,6 @@ function bump(
 function validateDocumentInvariants(
   document: BootstrapImportDocument,
 ): string | null {
-  const openWeeks = document.weeks.filter((week) => week.status === "open");
-  if (openWeeks.length !== 1) {
-    return `Document must contain exactly one open week (found ${openWeeks.length}).`;
-  }
-
   const week1 = document.weeks.find((week) => week.week_number === 1);
   if (!week1) {
     return "Document must include week 1.";
@@ -290,6 +285,31 @@ export function planBootstrapImport(options: {
     };
   }
 
+  const resolvedIds = new Set(resolvedMembers.map((member) => member.userId));
+  for (const [userId, membership] of existing.membersByUserId) {
+    if (membership.active && !resolvedIds.has(userId)) {
+      return {
+        ok: false,
+        error: `Unexpected active league member ${userId} is not in the import document.`,
+        conflicts,
+      };
+    }
+  }
+
+  const activeCommissioners = [...existing.membersByUserId.values()].filter(
+    (membership) => membership.active && membership.role === "commissioner",
+  );
+  if (
+    existing.league &&
+    activeCommissioners.length > 1
+  ) {
+    return {
+      ok: false,
+      error: `League has ${activeCommissioners.length} active commissioners; exactly one is required.`,
+      conflicts,
+    };
+  }
+
   if (existing.league) {
     const league = existing.league;
     if (
@@ -431,7 +451,29 @@ export function planBootstrapImport(options: {
       locks_at: locksAt,
       status: week.status,
     });
+  }
 
+  const uniqueLocks = new Set(preparedWeeks.map((week) => week.locks_at));
+  if (uniqueLocks.size !== preparedWeeks.length) {
+    return {
+      ok: false,
+      error: "Week deadlines must be unique (Central Time).",
+      conflicts,
+    };
+  }
+  for (let i = 1; i < preparedWeeks.length; i += 1) {
+    const prev = new Date(preparedWeeks[i - 1]!.locks_at).getTime();
+    const next = new Date(preparedWeeks[i]!.locks_at).getTime();
+    if (next <= prev) {
+      return {
+        ok: false,
+        error: `Week ${i + 1} deadline must be strictly later than Week ${i}.`,
+        conflicts,
+      };
+    }
+  }
+
+  for (const week of preparedWeeks) {
     const prior = existing.weeksByNumber.get(week.week_number);
     const key = `week:${week.week_number}`;
     if (!prior) {
@@ -441,7 +483,7 @@ export function planBootstrapImport(options: {
       const same =
         prior.label === week.label &&
         prior.status === week.status &&
-        new Date(prior.locks_at).getTime() === new Date(locksAt).getTime();
+        new Date(prior.locks_at).getTime() === new Date(week.locks_at).getTime();
       if (!same) {
         if (!allowOverwrite) {
           conflicts.push({

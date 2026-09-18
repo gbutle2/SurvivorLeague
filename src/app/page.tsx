@@ -65,13 +65,15 @@ export default async function HomePage() {
 
   let weekSummary = "Season calendar not configured yet.";
   if (current.kind === "actionable") {
-    weekSummary = `Current week: Week ${current.week.week_number} (open until ${formatCentralDateTime(current.week.locks_at)}).`;
-  } else if (current.kind === "open_expired") {
-    weekSummary = `Week ${current.week.week_number} is open but the deadline has passed.`;
-  } else if (current.kind === "informational") {
-    weekSummary = `Next upcoming: Week ${current.week.week_number} — picks not open yet.`;
-  } else if (current.kind === "multiple_open") {
-    weekSummary = "Configuration error: multiple weeks are marked open.";
+    weekSummary = `Current week: Week ${current.week.week_number} (picks open until ${formatCentralDateTime(current.week.locks_at)}).`;
+  } else if (current.kind === "none") {
+    weekSummary =
+      current.reason === "no_weeks"
+        ? "Season calendar not configured yet."
+        : "No eligible future week — regular season calendar may be complete.";
+  }
+  if (current.multipleOpenWarning.length > 1) {
+    weekSummary += ` Note: ${current.multipleOpenWarning.length} weeks are stored as open (eligibility still follows the earliest eligible week).`;
   }
 
   return (
@@ -133,7 +135,7 @@ export default async function HomePage() {
         {commissioner ? (
           <NavCard
             title="Commissioner"
-            description="Configure the season calendar, deadlines, and open/lock weeks."
+            description="Configure the season calendar, deadlines, and exceptional lock corrections."
             href="/commissioner"
           />
         ) : null}

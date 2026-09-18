@@ -107,14 +107,15 @@ function buildDocument(options: {
     return {
       week_number: weekNumber,
       label: `Week ${weekNumber}`,
-      lock_date: `2026-09-${String(Math.min(8 + weekNumber, 28)).padStart(2, "0")}`,
+      lock_date:
+        weekNumber === 1
+          ? "2020-09-08"
+          : `2099-09-${String(Math.min(7 + weekNumber, 28)).padStart(2, "0")}`,
       lock_time: "12:00",
       status:
         weekNumber === 1
           ? ("final" as const)
-          : weekNumber === 2
-            ? ("open" as const)
-            : ("upcoming" as const),
+          : ("upcoming" as const),
     };
   });
 
@@ -266,14 +267,15 @@ describe("transactional bootstrap import (local PostgreSQL)", () => {
     assert.equal(weeks.rows[0]!.c, 17);
 
     const open = await admin.query(
-      `SELECT count(*)::int AS c
+      `SELECT w.week_number
        FROM public.weeks w
        INNER JOIN public.seasons s ON s.id = w.season_id
        INNER JOIN public.leagues l ON l.id = s.league_id
-       WHERE l.slug = $1 AND s.year = $2 AND w.status = 'open'`,
+       WHERE l.slug = $1 AND s.year = $2
+         AND w.id = public.effective_current_week_id(s.id)`,
       [slug, year],
     );
-    assert.equal(open.rows[0]!.c, 1);
+    assert.equal(open.rows[0]!.week_number, 2);
   });
 
   it("forced failure after profile writes rolls back profiles", async () => {
@@ -641,6 +643,34 @@ describe("transactional bootstrap import (local PostgreSQL)", () => {
     assert.equal(result.rolledBack, true);
     assert.match(result.error, /TEST_FAIL_AFTER=verify/);
 
+    const leagues = await admin.query(
+      `SELECT count(*)::int AS c FROM public.leagues WHERE slug = $1`,
+      [slug],
+    );
+    assert.equal(leagues.rows[0]!.c, 0);
+  });
+
+  it("post-write deadline mismatch rolls back", async () => {
+    await cleanupLeague(admin, slug);
+    await admin.query(`DELETE FROM public.profiles WHERE id = ANY($1::uuid[])`, [
+      [commissionerId, playerId],
+    ]);
+    const document = buildDocument({
+      slug,
+      year,
+      commissionerId,
+      playerId,
+    });
+    const result = await applyBootstrapTransaction({
+      databaseUrl: DATABASE_URL,
+      document,
+      allowOverwrite: false,
+      testFailAfter: "corrupt_week_deadline",
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.rolledBack, true);
+    assert.match(result.error, /locks_at mismatch/i);
     const leagues = await admin.query(
       `SELECT count(*)::int AS c FROM public.leagues WHERE slug = $1`,
       [slug],

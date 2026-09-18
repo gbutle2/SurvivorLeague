@@ -316,6 +316,19 @@ async function executeWrites(
     }
   }
 
+  if (failAfter === "corrupt_week_deadline") {
+    const week2Id = weekIdByNumber.get(2);
+    if (week2Id) {
+      await executeSql(
+        client,
+        `UPDATE public.weeks
+         SET locks_at = locks_at - interval '1 day'
+         WHERE id = $1::uuid`,
+        [week2Id],
+      );
+    }
+  }
+
   for (const pick of plan.preparedPicks) {
     const pickKey = `${pick.week_number}:${pick.user_id}`;
     const action = actionFor(plan.mutations, "pick", pickKey);
@@ -405,13 +418,52 @@ async function verifyPostWrite(
     }
   }
 
+  const expectedMemberIds = new Set(
+    plan.resolvedMembers.map((member) => member.userId),
+  );
+  const activeMembers = await queryRows<{ user_id: string; role: string }>(
+    client,
+    `SELECT user_id::text AS user_id, role::text AS role
+     FROM public.league_members
+     WHERE league_id = $1::uuid AND active = true`,
+    [league.id],
+  );
+  for (const member of activeMembers) {
+    if (!expectedMemberIds.has(member.user_id)) {
+      throw new Error(
+        `Post-write verification failed: unexpected active member ${member.user_id}.`,
+      );
+    }
+  }
+
+  const commissioners = activeMembers.filter(
+    (member) => member.role === "commissioner",
+  );
+  if (commissioners.length !== 1) {
+    throw new Error(
+      `Post-write verification failed: expected exactly one active commissioner, found ${commissioners.length}.`,
+    );
+  }
+  const leagueRow = await queryExactlyOne<{ commissioner_user_id: string }>(
+    client,
+    `SELECT commissioner_user_id::text AS commissioner_user_id
+     FROM public.leagues WHERE id = $1::uuid`,
+    [league.id],
+  );
+  if (leagueRow.commissioner_user_id !== commissioners[0]!.user_id) {
+    throw new Error(
+      "Post-write verification failed: commissioner membership does not match leagues.commissioner_user_id.",
+    );
+  }
+
   const weeks = await queryRows<{
     week_number: number;
     status: string;
     label: string;
+    locks_at: string;
   }>(
     client,
-    `SELECT week_number, status::text AS status, label
+    `SELECT week_number, status::text AS status, label, locks_at::text AS locks_at
      FROM public.weeks WHERE season_id = $1::uuid ORDER BY week_number`,
     [season.id],
   );
@@ -427,13 +479,6 @@ async function verifyPostWrite(
     }
   }
 
-  const openWeeks = weeks.filter((week) => week.status === "open");
-  if (openWeeks.length !== 1) {
-    throw new Error(
-      `Post-write verification failed: expected exactly one open week, found ${openWeeks.length}.`,
-    );
-  }
-
   const week1 = weeks.find((week) => week.week_number === 1);
   if (!week1 || (week1.status !== "locked" && week1.status !== "final")) {
     throw new Error(
@@ -445,15 +490,42 @@ async function verifyPostWrite(
     const actual = weeks.find(
       (week) => week.week_number === expected.week_number,
     );
-    if (
-      !actual ||
-      actual.status !== expected.status ||
-      actual.label !== expected.label
-    ) {
+    if (!actual) {
       throw new Error(
-        `Post-write verification failed: week ${expected.week_number} status/label mismatch.`,
+        `Post-write verification failed: week ${expected.week_number} missing.`,
       );
     }
+    if (actual.status !== expected.status) {
+      throw new Error(
+        `Post-write verification failed: week ${expected.week_number} status mismatch.`,
+      );
+    }
+    if (actual.label !== expected.label) {
+      throw new Error(
+        `Post-write verification failed: week ${expected.week_number} label mismatch.`,
+      );
+    }
+    if (
+      new Date(actual.locks_at).getTime() !==
+      new Date(expected.locks_at).getTime()
+    ) {
+      throw new Error(
+        `Post-write verification failed: week ${expected.week_number} locks_at mismatch.`,
+      );
+    }
+  }
+
+  const effective = await queryMaybeOne<{ week_number: number }>(
+    client,
+    `SELECT w.week_number
+     FROM public.weeks w
+     WHERE w.id = public.effective_current_week_id($1::uuid)`,
+    [season.id],
+  );
+  if (!effective || effective.week_number !== 2) {
+    throw new Error(
+      `Post-write verification failed: effective current week should be Week 2 (got ${effective?.week_number ?? "none"}).`,
+    );
   }
 
   const weekIdRows = await queryRows<{ id: string; week_number: number }>(

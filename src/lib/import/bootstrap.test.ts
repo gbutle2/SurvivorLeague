@@ -23,9 +23,7 @@ function sampleDocument(
       status:
         weekNumber === 1
           ? ("final" as const)
-          : weekNumber === 2
-            ? ("open" as const)
-            : ("upcoming" as const),
+          : ("upcoming" as const),
     };
   });
 
@@ -133,5 +131,32 @@ describe("bootstrap import foundation", () => {
     doc.weeks = doc.weeks.slice(0, 16);
     const validated = validateBootstrapDocument(doc);
     assert.equal(validated.ok, false);
+  });
+
+  it("rejects unexpected active members even without overwrite", () => {
+    const validated = validateBootstrapDocument(sampleDocument());
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+    const existing = emptyExistingSnapshot();
+    existing.league = {
+      id: "league-1",
+      name: "Sunday Survivor",
+      slug: "sunday-survivor",
+      timezone: "America/Chicago",
+      commissioner_user_id: "11111111-1111-1111-1111-111111111111",
+    };
+    existing.membersByUserId.set("99999999-9999-9999-9999-999999999999", {
+      user_id: "99999999-9999-9999-9999-999999999999",
+      role: "player",
+      active: true,
+    });
+    const plan = dryRunBootstrapImport({
+      document: validated.document,
+      existing,
+      allowOverwrite: true,
+    });
+    assert.equal(plan.ok, false);
+    if (plan.ok) return;
+    assert.match(plan.error, /Unexpected active league member/i);
   });
 });

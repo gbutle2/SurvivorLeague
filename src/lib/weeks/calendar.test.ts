@@ -138,4 +138,29 @@ describe("planSeasonCalendar", () => {
     assert.ok(plan.conflicts.length >= 1);
     assert.match(plan.conflicts[0]!.message, /not overwritten/i);
   });
+
+  it("requires strictly increasing deadlines by week number", () => {
+    const inputs = seventeenWeeks();
+    inputs[1] = {
+      week_number: 2,
+      label: "Week 2",
+      lock_date: "2026-10-02",
+      lock_time: "12:00",
+    };
+    inputs[2] = {
+      week_number: 3,
+      label: "Week 3",
+      lock_date: "2026-10-01",
+      lock_time: "12:00",
+    };
+    const plan = planSeasonCalendar({
+      weekCount: 17,
+      inputs,
+      existing: [],
+    });
+    assert.equal(plan.ok, false);
+    if (!plan.ok) {
+      assert.match(plan.error, /strictly later/i);
+    }
+  });
 });

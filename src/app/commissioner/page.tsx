@@ -111,48 +111,61 @@ export default async function CommissionerPage() {
         ) : (
           <StatusPanel title="Season calendar ready" tone="success">
             <p>
-              All {calendar.expected} weeks are configured. Edit future deadlines
-              or open/lock weeks below as needed.
+              All {calendar.expected} weeks are configured. The current week
+              advances automatically by deadline. Use exceptional controls below
+              only to edit future deadlines, lock early, or clear stale rows.
             </p>
           </StatusPanel>
         )}
 
-        {current.kind === "multiple_open" ? (
-          <StatusPanel title="Configuration error" tone="danger">
+        {current.kind === "actionable" ? (
+          <StatusPanel title="Current week (automatic)" tone="success">
             <p>
-              Multiple weeks are marked open (
-              {current.weeks.map((week) => `Week ${week.week_number}`).join(", ")}
-              ). Lock extras so players have exactly one open week.
-            </p>
-          </StatusPanel>
-        ) : current.kind === "actionable" ? (
-          <StatusPanel title="Current actionable week" tone="success">
-            <p>
-              Week {current.week.week_number}: {current.week.label}. Locks{" "}
-              {formatCentralDateTime(current.week.locks_at)}.
-            </p>
-          </StatusPanel>
-        ) : current.kind === "open_expired" ? (
-          <StatusPanel title="Open week deadline passed" tone="warning">
-            <p>
-              Week {current.week.week_number} is still marked open, but the
-              deadline ({formatCentralDateTime(current.week.locks_at)}) has
-              passed. Lock it when ready.
-            </p>
-          </StatusPanel>
-        ) : current.kind === "informational" ? (
-          <StatusPanel title="Next upcoming week" tone="warning">
-            <p>
-              Week {current.week.week_number}: {current.week.label}. Deadline{" "}
-              {formatCentralDateTime(current.week.locks_at)}. Mark it open when
-              players should submit picks.
+              Week {current.week.week_number}: {current.week.label}. Picks open
+              until {formatCentralDateTime(current.week.locks_at)}. No weekly
+              “mark open” step is required.
             </p>
           </StatusPanel>
         ) : (
-          <StatusPanel title="No weeks yet" tone="warning">
-            <p>Configure the season calendar to continue.</p>
+          <StatusPanel
+            title={
+              current.reason === "no_weeks"
+                ? "No weeks yet"
+                : "No eligible current week"
+            }
+            tone="warning"
+          >
+            <p>
+              {current.reason === "no_weeks"
+                ? "Configure the season calendar to continue."
+                : "No upcoming/open week with a future deadline remains."}
+            </p>
           </StatusPanel>
         )}
+
+        {current.staleExpired.length > 0 ? (
+          <StatusPanel title="Stale expired weeks" tone="warning">
+            <p>
+              These weeks are past deadline but not locked/final:{" "}
+              {current.staleExpired
+                .map((week) => `Week ${week.week_number}`)
+                .join(", ")}
+              . Lock them when ready; they are skipped for player picks.
+            </p>
+          </StatusPanel>
+        ) : null}
+
+        {current.multipleOpenWarning.length > 1 ? (
+          <StatusPanel title="Legacy open-status warning" tone="warning">
+            <p>
+              Multiple weeks are stored as open (
+              {current.multipleOpenWarning
+                .map((week) => `Week ${week.week_number}`)
+                .join(", ")}
+              ). Player eligibility still uses the earliest eligible week only.
+            </p>
+          </StatusPanel>
+        ) : null}
 
         {weeksError ? (
           <StatusPanel title="Could not load weeks" tone="danger">
@@ -170,10 +183,16 @@ export default async function CommissionerPage() {
             </StatusPanel>
           ) : (
             weeks.map((week) => {
-              const presentation = presentWeekState({
-                status: week.status,
-                locksAt: week.locks_at,
-              });
+              const isEffectiveCurrent =
+                current.kind === "actionable" &&
+                current.week.id === week.id;
+              const presentation = presentWeekState(
+                {
+                  status: week.status,
+                  locksAt: week.locks_at,
+                },
+                { isEffectiveCurrent },
+              );
               const editable =
                 canEditWeekDetails({
                   status: week.status,

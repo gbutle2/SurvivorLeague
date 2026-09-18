@@ -96,19 +96,11 @@ export default async function HistoryPage() {
     >
       {current.kind === "actionable" ? (
         <div className="mb-4">
-          <StatusPanel title="Current actionable week" tone="success">
+          <StatusPanel title="Current week" tone="success">
             <p>
-              Week {current.week.week_number} is open for picks. Historical rows
-              below use stored week status and deadlines.
-            </p>
-          </StatusPanel>
-        </div>
-      ) : current.kind === "multiple_open" ? (
-        <div className="mb-4">
-          <StatusPanel title="Configuration error" tone="danger">
-            <p>
-              Multiple weeks are marked open. Ask the commissioner to correct
-              week configuration.
+              Week {current.week.week_number} is current for picks (deadline{" "}
+              {formatCentralDateTime(current.week.locks_at)}). Historical rows
+              below use stored status and deadlines.
             </p>
           </StatusPanel>
         </div>

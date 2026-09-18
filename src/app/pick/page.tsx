@@ -8,7 +8,7 @@ import { StatusPanel } from "@/components/status-panel";
 import { loadLeagueContext } from "@/lib/league/context";
 import { usedTeamIds } from "@/lib/picks/used-teams";
 import { createClient } from "@/lib/supabase/server";
-import { formatCentralDateTime, isLockedAt } from "@/lib/time/chicago";
+import { formatCentralDateTime } from "@/lib/time/chicago";
 import { resolveCurrentWeek } from "@/lib/weeks/current-week";
 import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
 
@@ -65,46 +65,34 @@ export default async function PickPage() {
   if (current.kind === "none") {
     return (
       <AppShell title="Current Pick" subtitle={context.league.name}>
-        <StatusPanel title="No weeks configured" tone="warning">
+        <StatusPanel
+          title={
+            current.reason === "no_weeks"
+              ? "No weeks configured"
+              : "No current week"
+          }
+          tone="warning"
+        >
           <p>
-            The season calendar is not ready yet. The commissioner needs to
-            configure all regular-season weeks.
+            {current.reason === "no_weeks"
+              ? "The season calendar is not ready yet. The commissioner needs to configure all regular-season weeks."
+              : "There is no eligible future week. The regular season calendar may be complete."}
           </p>
-        </StatusPanel>
-      </AppShell>
-    );
-  }
-
-  if (current.kind === "multiple_open") {
-    return (
-      <AppShell title="Current Pick" subtitle={context.league.name}>
-        <StatusPanel title="Multiple open weeks" tone="danger">
-          <p>
-            Configuration error: more than one week is marked open (
-            {current.weeks.map((week) => `Week ${week.week_number}`).join(", ")}
-            ). Ask the commissioner to close extras before picks continue.
-          </p>
-        </StatusPanel>
-      </AppShell>
-    );
-  }
-
-  if (current.kind === "informational") {
-    return (
-      <AppShell title="Current Pick" subtitle={context.league.name}>
-        <StatusPanel title="No open week yet" tone="warning">
-          <p>
-            Next up: Week {current.week.week_number} — {current.week.label}.
-            Deadline {formatCentralDateTime(current.week.locks_at)} (Central
-            Time). Picks open after the commissioner marks a week open.
-          </p>
+          {current.staleExpired.length > 0 ? (
+            <p className="mt-2">
+              Stale expired weeks for commissioner review:{" "}
+              {current.staleExpired
+                .map((week) => `Week ${week.week_number}`)
+                .join(", ")}
+              .
+            </p>
+          ) : null}
         </StatusPanel>
       </AppShell>
     );
   }
 
   const week = current.week;
-  const locked = !current.picksAllowed || isLockedAt(week.locks_at);
 
   const [{ data: teams, error: teamsError }, { data: seasonPicks, error: picksError }] =
     await Promise.all([
@@ -153,12 +141,16 @@ export default async function PickPage() {
       title="Current Pick"
       subtitle={`${context.league.name} · ${context.season.year}`}
     >
-      {current.kind === "open_expired" ? (
+      {current.multipleOpenWarning.length > 1 ? (
         <div className="mb-3">
-          <StatusPanel title="Deadline passed" tone="warning">
+          <StatusPanel title="Commissioner notice" tone="warning">
             <p>
-              The open week’s deadline has passed. Your selection is read-only
-              until the commissioner locks the week.
+              Multiple weeks are stored as open (
+              {current.multipleOpenWarning
+                .map((item) => `Week ${item.week_number}`)
+                .join(", ")}
+              ). Player eligibility still follows the earliest eligible week
+              (Week {week.week_number}).
             </p>
           </StatusPanel>
         </div>
@@ -168,7 +160,7 @@ export default async function PickPage() {
         initialTeamId={currentPick?.team_id ?? null}
         weekLabel={`Week ${week.week_number}: ${week.label}`}
         deadlineLabel={formatCentralDateTime(week.locks_at)}
-        locked={locked}
+        locked={false}
       />
     </AppShell>
   );

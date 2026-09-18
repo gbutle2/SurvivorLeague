@@ -145,6 +145,31 @@ export function planSeasonCalendar(options: {
     };
   }
 
+  // Strictly increasing, unique Central Time deadlines by week number.
+  const orderedLocks: string[] = [];
+  for (let n = 1; n <= weekCount; n += 1) {
+    const input = byNumber.get(n)!;
+    const locksAt = chicagoWallTimeToUtcIso(input.lock_date, input.lock_time);
+    orderedLocks.push(locksAt);
+  }
+  const uniqueLocks = new Set(orderedLocks);
+  if (uniqueLocks.size !== orderedLocks.length) {
+    return {
+      ok: false,
+      error: "Week deadlines must be unique (Central Time).",
+    };
+  }
+  for (let i = 1; i < orderedLocks.length; i += 1) {
+    const prev = new Date(orderedLocks[i - 1]!).getTime();
+    const next = new Date(orderedLocks[i]!).getTime();
+    if (next <= prev) {
+      return {
+        ok: false,
+        error: `Week ${i + 1} deadline must be strictly later than Week ${i}.`,
+      };
+    }
+  }
+
   return {
     ok: true,
     weeksToInsert,

@@ -12,7 +12,6 @@ import {
 import { mapPickMutationError } from "@/lib/picks/errors";
 import { setupSeasonBlocksPicks } from "@/lib/season/activation";
 import { createClient } from "@/lib/supabase/server";
-import { isLockedAt } from "@/lib/time/chicago";
 import { resolveCurrentWeek } from "@/lib/weeks/current-week";
 
 export type PickActionState = {
@@ -23,8 +22,9 @@ export type PickActionState = {
 };
 
 /**
- * Save or change the authenticated player's pick for the single open week.
+ * Save or change the authenticated player's pick for the effective current week.
  * Identity always comes from the session — never from submitted user_id.
+ * Database RLS remains authoritative for eligibility.
  */
 export async function savePick(
   _prev: PickActionState,
@@ -72,39 +72,14 @@ export async function savePick(
   }
 
   const current = resolveCurrentWeek(weeks ?? []);
-  if (current.kind === "none") {
+  if (current.kind !== "actionable" || !current.picksAllowed) {
     return {
       ...empty,
       error: "No week is available for picks right now.",
     };
   }
-  if (current.kind === "multiple_open") {
-    return {
-      ...empty,
-      error:
-        "Multiple weeks are marked open. Ask the commissioner to fix week configuration.",
-    };
-  }
-  if (current.kind === "informational") {
-    return {
-      ...empty,
-      error: `Week ${current.week.week_number} is upcoming. Picks open after the commissioner marks a week open.`,
-    };
-  }
-  if (current.kind === "open_expired" || !current.picksAllowed) {
-    return {
-      ...empty,
-      error: "This week is locked. Picks can no longer be changed.",
-    };
-  }
 
   const week = current.week;
-  if (isLockedAt(week.locks_at)) {
-    return {
-      ...empty,
-      error: "This week is locked. Picks can no longer be changed.",
-    };
-  }
 
   const { data: team, error: teamError } = await supabase
     .from("teams")
@@ -119,7 +94,7 @@ export async function savePick(
 
   const teamLabel = `${team.city} ${team.name} (${team.abbreviation})`;
 
-  const { data: existing, error: existingError } = await supabase
+  const { data: existingPick, error: existingError } = await supabase
     .from("picks")
     .select("id, team_id")
     .eq("week_id", week.id)
@@ -127,11 +102,11 @@ export async function savePick(
     .maybeSingle();
 
   if (existingError) {
-    return { ...empty, error: mapPickMutationError(existingError) };
+    return { ...empty, error: "Database unavailable. Could not load your pick." };
   }
 
-  if (existing) {
-    if (existing.team_id === teamId) {
+  if (existingPick) {
+    if (existingPick.team_id === teamId) {
       return {
         error: null,
         success: `Pick already saved: ${teamLabel}.`,
@@ -140,25 +115,24 @@ export async function savePick(
       };
     }
 
-    const { data, error: updateError } = await supabase
+    const { data, error } = await supabase
       .from("picks")
       .update({ team_id: teamId })
-      .eq("id", existing.id)
+      .eq("id", existingPick.id)
       .eq("user_id", userId)
       .eq("week_id", week.id)
       .select("id, team_id")
       .maybeSingle();
 
-    if (updateError) {
-      return { ...empty, error: mapPickMutationError(updateError) };
+    if (error) {
+      return { ...empty, error: mapPickMutationError(error) };
     }
-
     const confirmed = requireMutationRow(data, PICK_UPDATE_ZERO_ROW);
     if (!confirmed.ok) {
       return { ...empty, error: confirmed.error };
     }
   } else {
-    const { data, error: insertError } = await supabase
+    const { data, error } = await supabase
       .from("picks")
       .insert({
         week_id: week.id,
@@ -168,10 +142,9 @@ export async function savePick(
       .select("id, team_id")
       .maybeSingle();
 
-    if (insertError) {
-      return { ...empty, error: mapPickMutationError(insertError) };
+    if (error) {
+      return { ...empty, error: mapPickMutationError(error) };
     }
-
     const confirmed = requireMutationRow(data, PICK_INSERT_ZERO_ROW);
     if (!confirmed.ok) {
       return { ...empty, error: confirmed.error };
@@ -185,7 +158,7 @@ export async function savePick(
 
   return {
     error: null,
-    success: `Saved pick: ${teamLabel}.`,
+    success: `Saved ${teamLabel} for Week ${week.week_number}.`,
     savedTeamId: teamId,
     savedTeamLabel: teamLabel,
   };

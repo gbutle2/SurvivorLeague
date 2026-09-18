@@ -14,12 +14,14 @@ export type BootstrapTestFailAfter =
   | "profiles"
   | "memberships"
   | "weeks"
+  | "corrupt_week_deadline"
   | "verify";
 
 const ALLOWED = new Set<string>([
   "profiles",
   "memberships",
   "weeks",
+  "corrupt_week_deadline",
   "verify",
 ]);
 

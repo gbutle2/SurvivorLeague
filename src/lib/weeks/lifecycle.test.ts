@@ -87,23 +87,32 @@ describe("week lifecycle", () => {
   it("documents allowed and disallowed status transitions", () => {
     assert.equal(isStatusTransitionAllowed("upcoming", "open"), true);
     assert.equal(isStatusTransitionAllowed("open", "locked"), true);
+    assert.equal(isStatusTransitionAllowed("upcoming", "locked"), true);
     assert.equal(isStatusTransitionAllowed("locked", "open"), false);
     assert.equal(isStatusTransitionAllowed("final", "open"), false);
     assert.equal(isStatusTransitionAllowed("open", "upcoming"), false);
-    assert.equal(isStatusTransitionAllowed("upcoming", "locked"), false);
   });
 
-  it("presents expired open weeks distinctly from active open weeks", () => {
+  it("presents current, upcoming, and deadline-passed weeks", () => {
     assert.equal(
-      presentWeekState({ status: "open", locksAt: later }, future).kind,
-      "open_active",
+      presentWeekState(
+        { status: "upcoming", locksAt: later },
+        { isEffectiveCurrent: true, now: future },
+      ).kind,
+      "current",
     );
     assert.equal(
-      presentWeekState({ status: "open", locksAt: past }, future).kind,
-      "open_expired",
+      presentWeekState(
+        { status: "open", locksAt: past },
+        { now: future },
+      ).kind,
+      "deadline_passed",
     );
     assert.equal(
-      presentWeekState({ status: "upcoming", locksAt: later }, future).tone,
+      presentWeekState(
+        { status: "upcoming", locksAt: later },
+        { now: future },
+      ).tone,
       "neutral",
     );
   });

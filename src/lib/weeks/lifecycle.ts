@@ -62,8 +62,8 @@ export function canTransitionWeekStatus(
   }
 
   if (next === "locked") {
-    if (week.status !== "open") {
-      return "Only an open week can be locked.";
+    if (week.status !== "open" && week.status !== "upcoming") {
+      return "Only upcoming or open weeks can be locked early.";
     }
     return null;
   }
@@ -81,35 +81,43 @@ export function isStatusTransitionAllowed(
   if (from === "open" && to === "locked") {
     return true;
   }
+  if (from === "upcoming" && to === "locked") {
+    return true;
+  }
   return false;
 }
 
 export type WeekPresentation =
+  | { kind: "current"; label: string; tone: "active" }
   | { kind: "upcoming"; label: string; tone: "neutral" }
-  | { kind: "open_active"; label: string; tone: "active" }
-  | { kind: "open_expired"; label: string; tone: "expired" }
+  | { kind: "deadline_passed"; label: string; tone: "expired" }
   | { kind: "locked"; label: string; tone: "locked" }
   | { kind: "final"; label: string; tone: "locked" };
 
 export function presentWeekState(
   week: WeekLifecycleState,
-  now: Date = new Date(),
+  options?: { isEffectiveCurrent?: boolean; now?: Date },
 ): WeekPresentation {
+  const now = options?.now ?? new Date();
   if (week.status === "final") {
     return { kind: "final", label: "Final", tone: "locked" };
   }
   if (week.status === "locked") {
     return { kind: "locked", label: "Locked", tone: "locked" };
   }
-  if (week.status === "open") {
-    if (deadlinePassed(week.locksAt, now)) {
-      return {
-        kind: "open_expired",
-        label: "Deadline passed",
-        tone: "expired",
-      };
-    }
-    return { kind: "open_active", label: "Open", tone: "active" };
+  if (deadlinePassed(week.locksAt, now)) {
+    return {
+      kind: "deadline_passed",
+      label: "Deadline passed",
+      tone: "expired",
+    };
+  }
+  if (options?.isEffectiveCurrent) {
+    return {
+      kind: "current",
+      label: "Current / picks open",
+      tone: "active",
+    };
   }
   return { kind: "upcoming", label: "Upcoming", tone: "neutral" };
 }
@@ -122,5 +130,5 @@ export function canShowOpenAction(
 }
 
 export function canShowLockAction(week: WeekLifecycleState): boolean {
-  return week.status === "open";
+  return week.status === "upcoming" || week.status === "open";
 }

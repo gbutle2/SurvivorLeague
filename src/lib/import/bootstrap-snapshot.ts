@@ -36,15 +36,16 @@ export async function resolveAuthMembers(
     ),
   ];
 
-  const existingById = new Map<string, string>();
+  const existingById = new Map<string, { id: string; email: string | null }>();
   if (wantedIds.length > 0) {
-    const rows = await queryRows<{ id: string }>(
+    const rows = await queryRows<{ id: string; email: string | null }>(
       client,
-      `SELECT id::text AS id FROM auth.users WHERE id = ANY($1::uuid[])`,
+      `SELECT id::text AS id, lower(email) AS email
+       FROM auth.users WHERE id = ANY($1::uuid[])`,
       [wantedIds],
     );
     for (const row of rows) {
-      existingById.set(row.id, row.id);
+      existingById.set(row.id, row);
     }
   }
 
@@ -62,10 +63,63 @@ export async function resolveAuthMembers(
     }
   }
 
+  // Also collect emails from pick identities for mismatch checks.
+  const pickEmails = [
+    ...new Set(
+      document.picks
+        .map((pick) => pick.email?.toLowerCase())
+        .filter((email): email is string => Boolean(email)),
+    ),
+  ].filter((email) => !idByEmail.has(email));
+  if (pickEmails.length > 0) {
+    const rows = await queryRows<{ id: string; email: string }>(
+      client,
+      `SELECT id::text AS id, lower(email) AS email
+       FROM auth.users
+       WHERE lower(email) = ANY($1::text[])`,
+      [pickEmails],
+    );
+    for (const row of rows) {
+      idByEmail.set(row.email, row.id);
+    }
+  }
+
+  const pickIds = [
+    ...new Set(
+      document.picks
+        .map((pick) => pick.auth_user_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ].filter((id) => !existingById.has(id));
+  if (pickIds.length > 0) {
+    const rows = await queryRows<{ id: string; email: string | null }>(
+      client,
+      `SELECT id::text AS id, lower(email) AS email
+       FROM auth.users WHERE id = ANY($1::uuid[])`,
+      [pickIds],
+    );
+    for (const row of rows) {
+      existingById.set(row.id, row);
+    }
+  }
+
   const resolved: ResolvedAuthMember[] = [];
   for (const member of document.members) {
     let userId: string | undefined;
-    if (member.auth_user_id) {
+    if (member.auth_user_id && member.email) {
+      const byId = existingById.get(member.auth_user_id);
+      if (!byId) {
+        throw new Error(
+          `Auth user ${member.auth_user_id} (${member.display_name}) does not exist.`,
+        );
+      }
+      if (byId.email !== member.email.toLowerCase()) {
+        throw new Error(
+          `Auth UUID/email mismatch for member "${member.display_name}".`,
+        );
+      }
+      userId = member.auth_user_id;
+    } else if (member.auth_user_id) {
       if (!existingById.has(member.auth_user_id)) {
         throw new Error(
           `Auth user ${member.auth_user_id} (${member.display_name}) does not exist.`,
@@ -91,6 +145,23 @@ export async function resolveAuthMembers(
       role: member.role,
       active: member.active,
     });
+  }
+
+  // Validate pick identities that supply both UUID and email.
+  for (const pick of document.picks) {
+    if (pick.auth_user_id && pick.email) {
+      const byId = existingById.get(pick.auth_user_id);
+      if (!byId) {
+        throw new Error(
+          `Pick week ${pick.week_number} auth_user_id does not exist.`,
+        );
+      }
+      if (byId.email !== pick.email.toLowerCase()) {
+        throw new Error(
+          `Pick week ${pick.week_number} Auth UUID/email mismatch.`,
+        );
+      }
+    }
   }
 
   return resolved;
