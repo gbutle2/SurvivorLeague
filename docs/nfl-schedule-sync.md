@@ -45,6 +45,21 @@ Never partially applies: validation failures make no schedule changes; success-a
 
 `syncNflSchedule` rejects `pg.Pool` (mixed connections) and requires a dedicated client.
 
+## Dedicated Postgres TLS (sync client only)
+
+Vercel/Supabase `POSTGRES_URL*` values often include libpq-style TLS query parameters (`sslmode`, etc.). In `pg` 8.x, those parameters are parsed after the Client config and **replace** an explicit `ssl` object, which can force verify-full behavior and fail against the managed database certificate chain.
+
+The schedule sync client therefore:
+
+1. Resolves `SUPABASE_DB_URL` → `POSTGRES_URL_NON_POOLING` → `POSTGRES_URL`
+2. Removes conflicting URL TLS parameters (`sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `uselibpqcompat`)
+3. Uses **encrypted TLS** for every non-local host with scoped `rejectUnauthorized: false` on this dedicated server-only `pg.Client` only
+4. Disables SSL only for local development hosts (`localhost` / `127.0.0.1` / `::1`)
+
+This is **not** full certificate verification. Global Node TLS verification and NFLverse HTTPS verification remain enabled. `NODE_TLS_REJECT_UNAUTHORIZED=0` is prohibited. A future hardening step is to trust the Supabase CA and set `rejectUnauthorized: true` without conflicting URL `sslmode` parameters.
+
+Connection strings must never be logged, returned to the browser, or placed in `NEXT_PUBLIC_*` variables.
+
 ## Manual override rule
 
 `games.manual_override = true` freezes **all** provider-managed schedule and result fields on that game. Subsequent syncs only advance `last_synced_at`. Commissioner-corrected pick results use `result_source = commissioner` with a nonblank `result_override_reason` and are never overwritten by automatic sync.

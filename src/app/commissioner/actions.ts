@@ -545,6 +545,7 @@ export async function syncNflScheduleAction(
 
     revalidateLeaguePaths();
 
+    // Controlled sync outcomes (failed/rejected after connect) keep their summaries.
     if (result.status !== "succeeded") {
       return {
         ...initialHelpers,
@@ -559,12 +560,12 @@ export async function syncNflScheduleAction(
       success: `NFL schedule synced (inserted ${result.inserted}, updated ${result.updated}, rejected ${result.rejected}). Not a live scoring feed.`,
     };
   } catch (error) {
+    const { logSyncInfrastructureError, mapSyncInfrastructureErrorForUi } =
+      await import("@/lib/nfl/sync-errors");
+    logSyncInfrastructureError(error);
     return {
       ...initialHelpers,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Schedule sync failed.",
+      error: mapSyncInfrastructureErrorForUi(error),
     };
   }
 }
