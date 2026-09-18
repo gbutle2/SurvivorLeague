@@ -35,10 +35,10 @@ Values must come from the approved workbook and Supabase Auth. Leave blank until
 | League name + slug | `leagues` |
 | Season year | `seasons.year` |
 | Scoring rule integers / flags | `scoring_rules` (must match agreed product rules) |
-| Week 1–17 Central Time lock date + time | `weeks.locks_at` via CT conversion |
+| Week 1–18 Central Time lock date + time | `weeks.locks_at` via CT conversion |
 | Week 1 status (`locked` or `final`) | `weeks.status` |
 | Week 2 real deadline (status may stay `upcoming`) | `weeks` |
-| Weeks 3–17 status (`upcoming`) + deadlines (strictly increasing) | `weeks` |
+| Weeks 3–18 status (`upcoming`) + deadlines (strictly increasing) | `weeks` |
 | Week 1 pick per player: NFL team abbreviation | `picks.team_id` via `teams.abbreviation` |
 | Week 1 pick result per player (`win` / `loss` / `tie`) | `picks.result` |
 | Any Week 2 picks (only if workbook already has them) | `picks` — omit if not yet chosen |

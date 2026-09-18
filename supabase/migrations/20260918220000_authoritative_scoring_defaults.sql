@@ -1,8 +1,9 @@
--- Authoritative league scoring defaults: 17-week season, 3/3/5 bonuses, 1/2/3/4 playoffs.
--- Does not delete Week 18 (or any week rows). Existing extra weeks remain for history/schedule.
+-- Authoritative league scoring defaults: 18-week season, 3/3/5 bonuses, 1/2/3/4 playoffs.
+-- Never deletes Week 18 rows or picks. Safe if a temporary 17-week config was applied
+-- locally, and a no-op for seasons already at 18 with customized scoring.
 
 ALTER TABLE public.seasons
-  ALTER COLUMN regular_week_count SET DEFAULT 17;
+  ALTER COLUMN regular_week_count SET DEFAULT 18;
 
 ALTER TABLE public.scoring_rules
   ALTER COLUMN best_record_bonus SET DEFAULT 3,
@@ -13,12 +14,13 @@ ALTER TABLE public.scoring_rules
   ALTER COLUMN conference_points SET DEFAULT 3,
   ALTER COLUMN superbowl_points SET DEFAULT 4;
 
--- Align seasons that still carry the prior 18-week Phase 2B-B default.
+-- Restore seasons that still carry the temporary 17-week configuration.
 UPDATE public.seasons
-SET regular_week_count = 17
-WHERE regular_week_count = 18;
+SET regular_week_count = 18
+WHERE regular_week_count = 17;
 
 -- Align scoring rows that still match the prior Phase 2B-B defaults only.
+-- Customized rows (any other combination) are left unchanged.
 UPDATE public.scoring_rules
 SET
   best_record_bonus = 3,

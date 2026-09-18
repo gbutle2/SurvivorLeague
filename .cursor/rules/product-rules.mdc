@@ -5,13 +5,13 @@ alwaysApply: true
 
 # Product rules
 
-- 17 regular-season weekly picks; one NFL team per player per week; team must play that week; pick locks at that team’s kickoff; no regular-season team reuse.
+- 18 regular-season weekly picks; one NFL team per player per week; team must play that week; pick locks at that team’s kickoff; no regular-season team reuse.
 - Eliminated players continue making weekly picks for points.
 - Win = 1 point; loss or tie = 0.
 - Missed pick is not a win, breaks streak, and eliminates from regular survivor.
 - Bonuses: best record 3, longest streak 3, regular survivor winner 5; tied leaders each get the full bonus.
 - Regular survivor ends when exactly one player remains alive; that winner keeps the bonus even after later losses. Same-week wipeouts and end-of-season multi-survivor fields are full-bonus ties.
-- One 17-0 player wins overall; multiple 17-0 players use playoff survivor as tiebreak.
+- One 18-0 player wins overall; multiple 18-0 players use playoff survivor as tiebreak.
 - Playoffs are a separate survivor with a fresh used-team list; points 1 / 2 / 3 / 4 (max 10).
 - A missed pick in a completed playoff round eliminates that player from playoff survivor.
 - Timezone: Central Time.

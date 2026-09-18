@@ -25,7 +25,7 @@ Required CSV columns: `game_id`, `season`, `game_type`, `week`, `gameday`, `game
 
 Mapped:
 
-- `REG` weeks 1–18 → regular-season schedule games (league competition uses `seasons.regular_week_count`, typically 17; Week 18 rows may be retained without being scored)
+- `REG` weeks 1–18 → regular season (league competition uses all 18 calendar weeks)
 
 - `WC` / `DIV` / `CON` / `SB` → playoff rounds
 - Team abbreviations (including `LA` → `LAR`)

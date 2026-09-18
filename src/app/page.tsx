@@ -32,13 +32,11 @@ export default async function HomePage() {
 
   const { context } = result;
   const supabase = await createClient();
-  const { weeks: allWeeks, error: weeksError } = await loadSeasonWeeks(
+  const { weeks, error: weeksError } = await loadSeasonWeeks(
     supabase,
     context.season.id,
   );
-  // Competition uses regular_week_count (17). Extra synced weeks (e.g. Week 18)
-  // are retained in the database but excluded from standings and pick workflow.
-  const competitionWeeks = allWeeks.filter(
+  const competitionWeeks = weeks.filter(
     (week) => week.week_number <= context.season.regularWeekCount,
   );
   const [membersResult, signalsResult, playoffRoundSignalsResult, playoffRoundsResult] =
@@ -181,10 +179,6 @@ export default async function HomePage() {
       })
     : [];
 
-  const extraWeeks = allWeeks.filter(
-    (week) => week.week_number > context.season.regularWeekCount,
-  );
-
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-6 sm:py-8">
       <header className="mb-5 flex items-start justify-between gap-3">
@@ -217,18 +211,6 @@ export default async function HomePage() {
           <StatusPanel title="Team names unavailable" tone="warning">
             <p>
               Weekly picks are visible, but team abbreviations could not be loaded.
-            </p>
-          </StatusPanel>
-        </div>
-      ) : null}
-      {extraWeeks.length > 0 ? (
-        <div className="mb-4">
-          <StatusPanel title="Extra schedule weeks retained" tone="warning">
-            <p>
-              This season is configured for {context.season.regularWeekCount}{" "}
-              regular-season picks. Week{" "}
-              {extraWeeks.map((week) => week.week_number).join(", ")} remain in
-              the database from schedule sync and are not scored.
             </p>
           </StatusPanel>
         </div>

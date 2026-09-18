@@ -156,7 +156,7 @@ function buildDocument(options: {
   commissionerName?: string;
   playerName?: string;
 }): BootstrapImportDocument {
-  const weeks = Array.from({ length: 17 }, (_, index) => {
+  const weeks = Array.from({ length: 18 }, (_, index) => {
     const weekNumber = index + 1;
     return {
       week_number: weekNumber,
@@ -183,7 +183,7 @@ function buildDocument(options: {
     season: {
       year: options.year,
       status: "active",
-      regular_week_count: 17,
+      regular_week_count: 18,
     },
     scoring_rules: {
       correct_regular_pick_points: 1,
@@ -324,7 +324,7 @@ describe("transactional bootstrap import (local PostgreSQL)", () => {
        WHERE l.slug = $1 AND s.year = $2`,
       [slug, year],
     );
-    assert.equal(weeks.rows[0]!.c, 17);
+    assert.equal(weeks.rows[0]!.c, 18);
 
     const open = await admin.query(
       `SELECT w.week_number
@@ -598,7 +598,7 @@ describe("transactional bootstrap import (local PostgreSQL)", () => {
        WHERE l.slug = $1 AND s.year = $2`,
       [slug, year],
     );
-    assert.equal(weeks.rows[0]!.c, 17);
+    assert.equal(weeks.rows[0]!.c, 18);
   });
 
   it("changed database state is detected when apply replans", async () => {

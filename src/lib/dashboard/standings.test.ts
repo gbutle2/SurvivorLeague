@@ -10,6 +10,7 @@ import {
   type DashboardPlayoffPick,
   type DashboardPlayoffRound,
 } from "./standings.ts";
+import { isPerfectRegularSeason } from "../scoring/rules.test.ts";
 
 const players = [
   { userId: "a", displayName: "A" },
@@ -478,5 +479,112 @@ describe("league dashboard standings", () => {
     assert.equal(standings[0]?.pointsEarned, standings[1]?.pointsEarned);
     assert.equal(standings[0]?.displayName, "A");
     assert.equal(standings[1]?.displayName, "B");
+  });
+});
+
+describe("18-week regular-season competition", () => {
+  const eighteenWeeks = Array.from({ length: 18 }, (_, index) => ({
+    id: `w${index + 1}`,
+    weekNumber: index + 1,
+    status: "final" as const,
+  }));
+
+  it("counts Week 18 wins toward earned points, record, and streak", () => {
+    const picks = eighteenWeeks.map((week) => ({
+      userId: "a",
+      weekId: week.id,
+      result: "win" as const,
+    }));
+    const [standing] = buildRegularStandings([players[0]!], eighteenWeeks, picks, rules);
+    assert.equal(standing?.wins, 18);
+    assert.equal(standing?.longestStreak, 18);
+    assert.equal(standing?.pointsEarned, 18 + 3 + 3 + 5);
+    assert.equal(isPerfectRegularSeason(standing!.wins), true);
+  });
+
+  it("keeps multiple 18-0 players tied on earned points before playoffs", () => {
+    const picks = [
+      ...eighteenWeeks.map((week) => ({
+        userId: "a",
+        weekId: week.id,
+        result: "win" as const,
+      })),
+      ...eighteenWeeks.map((week) => ({
+        userId: "b",
+        weekId: week.id,
+        result: "win" as const,
+      })),
+    ];
+    const standings = buildRegularStandings(
+      [players[0]!, players[1]!],
+      eighteenWeeks,
+      picks,
+      rules,
+    );
+    assert.equal(standings[0]?.pointsEarned, standings[1]?.pointsEarned);
+    assert.equal(standings[0]?.wins, 18);
+    assert.equal(standings[1]?.wins, 18);
+  });
+
+  it("applies Week 18 loss, tie, and miss to survivor correctly", () => {
+    const almostPerfect = eighteenWeeks.slice(0, 17).map((week) => ({
+      userId: "a",
+      weekId: week.id,
+      result: "win" as const,
+    }));
+
+    const loss = buildRegularStandings(
+      [players[0]!],
+      eighteenWeeks,
+      [...almostPerfect, { userId: "a", weekId: "w18", result: "loss" }],
+      rules,
+    )[0];
+    assert.equal(loss?.survivorAlive, false);
+    assert.equal(loss?.wins, 17);
+
+    const tie = buildRegularStandings(
+      [players[0]!],
+      eighteenWeeks,
+      [...almostPerfect, { userId: "a", weekId: "w18", result: "tie" }],
+      rules,
+    )[0];
+    assert.equal(tie?.survivorAlive, false);
+
+    const miss = buildRegularStandings(
+      [players[0]!],
+      eighteenWeeks,
+      almostPerfect,
+      rules,
+    )[0];
+    assert.equal(miss?.missed, 1);
+    assert.equal(miss?.survivorAlive, false);
+  });
+
+  it("includes unresolved Week 18 in max possible and removes it after resolution", () => {
+    const weeksOpen18 = eighteenWeeks.map((week) =>
+      week.weekNumber === 18
+        ? { ...week, status: "open" as const }
+        : week,
+    );
+    const picks = weeksOpen18
+      .filter((week) => week.weekNumber < 18)
+      .map((week) => ({
+        userId: "a",
+        weekId: week.id,
+        result: "win" as const,
+      }));
+
+    const before = buildRegularStandings([players[0]!], weeksOpen18, picks, rules)[0];
+    assert.equal(before?.wins, 17);
+    assert.equal(before?.maxPossible, before!.pointsEarned + 1 + 3 + 3 + 10);
+
+    const after = buildRegularStandings(
+      [players[0]!],
+      eighteenWeeks,
+      [...picks, { userId: "a", weekId: "w18", result: "win" }],
+      rules,
+    )[0];
+    assert.equal(after?.wins, 18);
+    assert.equal(after?.maxPossible, after!.pointsEarned + 10);
   });
 });

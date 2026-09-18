@@ -27,7 +27,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Agreed product rules
 
-- 17 regular-season weekly picks
+- 18 regular-season weekly picks
 - One NFL team per player per week
 - Selected team must play that NFL week; pick locks at that team’s kickoff
 - No regular-season team reuse
@@ -41,8 +41,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Regular survivor ends as soon as exactly one player remains alive; that player keeps the bonus even if they later lose
 - If every remaining survivor is eliminated in the same week, those players tie and each receives the full survivor bonus
 - If multiple players remain alive through the final regular-season week, they tie and each receives the full survivor bonus
-- One 17-0 player automatically wins overall
-- Multiple 17-0 players use the playoff survivor as the tiebreak
+- One 18-0 player automatically wins overall
+- Multiple 18-0 players use the playoff survivor as the tiebreak
 - Playoffs are a separate survivor with a fresh used-team list
 - Playoff points are 1 / 2 / 3 / 4 (maximum 10)
 - A missed pick in a completed playoff round eliminates that player from playoff survivor

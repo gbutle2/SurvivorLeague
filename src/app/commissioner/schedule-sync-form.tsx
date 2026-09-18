@@ -19,9 +19,7 @@ export function SyncNflScheduleForm({ seasonYear }: { seasonYear: number }) {
       </h2>
       <p className="text-sm text-stone-600">
         Pulls the fixed nflverse schedules release for {seasonYear}, upserts
-        games, ensures weeks 1–18 exist for NFL schedule completeness (competition
-        uses the season&apos;s regular-week count, typically 17), ensures playoff
-        rounds, and applies automatic
+        games, ensures weeks 1–18 and playoff rounds, and applies automatic
         pending-pick results for final games. Kickoffs update before the stored
         kickoff; post-kickoff changes need review. Scores refresh daily plus this
         manual sync — not live scoring. Cancellations/no-contests may need
