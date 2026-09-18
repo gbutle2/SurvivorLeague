@@ -48,9 +48,21 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Environment
 
-Use only:
+Browser-accessible variables:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 
-Never introduce a service-role / secret key into the Next.js app or `NEXT_PUBLIC_*` variables.
+Approved server-only schedule-sync variables:
+
+- `SUPABASE_DB_URL`, `POSTGRES_URL_NON_POOLING`, or `POSTGRES_URL`
+- `CRON_SECRET` or `SCHEDULE_SYNC_SECRET`
+
+Security requirements:
+
+- Database URLs, passwords, service-role keys, secret keys, and cron secrets must never use a `NEXT_PUBLIC_` prefix.
+- Server-only database connections may be used only in server code running in the Node.js runtime.
+- The browser Supabase client must use only the project URL and publishable key.
+- Never expose database URLs or secret/service-role credentials to client components, browser bundles, logs, API responses, or source control.
+- Do not add `SUPABASE_SERVICE_ROLE_KEY` to application code when the direct server-only PostgreSQL connection is sufficient.
+- `.env.local` and Vercel secret values must remain untracked.

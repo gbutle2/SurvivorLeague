@@ -6,9 +6,7 @@ alwaysApply: false
 
 # Database and security
 
-- Never edit an already-applied Supabase migration. Prefer updating an unapplied migration in place only when it has never been applied anywhere; otherwise add a new forward-only corrective migration. Before changing an existing migration file, compare its version with the remote migration list.
-- Local `supabase db reset` success does not prove the production upgrade path. When fixing applied-migration drift, add an upgrade-path test that reproduces the drifted catalog, applies the new migration, and asserts `pg_catalog` state.
-- Production preflight must compare expected functions/triggers/policies with `pg_catalog`, not migration history alone.
+- Never edit an already-applied Supabase migration; fix defects with a new forward-only migration. Before changing an existing migration file, compare its version with the remote migration list. Local `supabase db reset` success does not prove the production upgrade path. Production preflight must compare expected functions/triggers/policies with `pg_catalog`, not migration history alone. When fixing applied-migration drift, add an upgrade-path test that reproduces the drifted catalog, applies the new migration, and asserts `pg_catalog` state.
 - Do not apply migrations to remote Supabase unless explicitly asked.
 - Prefer SECURITY DEFINER helpers with `SET search_path = public` for membership checks to avoid RLS recursion.
 - SECURITY DEFINER functions default to PUBLIC EXECUTE — explicitly revoke PUBLIC (and authenticated, for trigger/maintenance helpers) unless a read-only helper is required by RLS.
@@ -19,3 +17,24 @@ alwaysApply: false
 - `teams` is migration-managed reference data; authenticated app users are read-only.
 - Never claim RLS is verified from reading SQL alone — run the database authorization tests when local Supabase is available.
 - Do not weaken application-table RLS to make tests pass; grant only the `tests` schema helpers to authenticated.
+
+## Environment
+
+Browser-accessible variables:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+
+Approved server-only schedule-sync variables:
+
+- `SUPABASE_DB_URL`, `POSTGRES_URL_NON_POOLING`, or `POSTGRES_URL`
+- `CRON_SECRET` or `SCHEDULE_SYNC_SECRET`
+
+Security requirements:
+
+- Database URLs, passwords, service-role keys, secret keys, and cron secrets must never use a `NEXT_PUBLIC_` prefix.
+- Server-only database connections may be used only in server code running in the Node.js runtime.
+- The browser Supabase client must use only the project URL and publishable key.
+- Never expose database URLs or secret/service-role credentials to client components, browser bundles, logs, API responses, or source control.
+- Do not add `SUPABASE_SERVICE_ROLE_KEY` to application code when the direct server-only PostgreSQL connection is sufficient.
+- `.env.local` and Vercel secret values must remain untracked.
