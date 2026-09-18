@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sundaysurvivorpicks.local/schemas/bootstrap-import-v1.json",
+  "title": "Sunday Survivor Picks bootstrap import v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "league",
+    "season",
+    "scoring_rules",
+    "members",
+    "weeks",
+    "picks"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "league": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "name", "timezone"],
+      "properties": {
+        "slug": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "timezone": { "const": "America/Chicago" }
+      }
+    },
+    "season": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["year", "status", "regular_week_count"],
+      "properties": {
+        "year": { "type": "integer" },
+        "status": { "enum": ["setup", "active", "complete"] },
+        "regular_week_count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "scoring_rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "correct_regular_pick_points",
+        "best_record_bonus",
+        "longest_streak_bonus",
+        "survivor_bonus",
+        "wildcard_points",
+        "divisional_points",
+        "conference_points",
+        "superbowl_points",
+        "perfect_season_override"
+      ],
+      "properties": {
+        "correct_regular_pick_points": { "type": "integer" },
+        "best_record_bonus": { "type": "integer" },
+        "longest_streak_bonus": { "type": "integer" },
+        "survivor_bonus": { "type": "integer" },
+        "wildcard_points": { "type": "integer" },
+        "divisional_points": { "type": "integer" },
+        "conference_points": { "type": "integer" },
+        "superbowl_points": { "type": "integer" },
+        "perfect_season_override": { "type": "boolean" }
+      }
+    },
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["display_name", "role", "active"],
+        "properties": {
+          "auth_user_id": { "type": "string", "format": "uuid" },
+          "email": { "type": "string", "format": "email" },
+          "display_name": { "type": "string", "minLength": 1 },
+          "role": { "enum": ["commissioner", "player"] },
+          "active": { "type": "boolean" }
+        },
+        "anyOf": [
+          { "required": ["auth_user_id"] },
+          { "required": ["email"] }
+        ]
+      }
+    },
+    "weeks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "week_number",
+          "label",
+          "lock_date",
+          "lock_time",
+          "status"
+        ],
+        "properties": {
+          "week_number": { "type": "integer", "minimum": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "lock_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "lock_time": {
+            "type": "string",
+            "pattern": "^\\d{2}:\\d{2}(:\\d{2})?$"
+          },
+          "status": {
+            "enum": ["upcoming", "open", "locked", "final"]
+          }
+        }
+      }
+    },
+    "picks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["week_number", "team_abbreviation", "result"],
+        "properties": {
+          "week_number": { "type": "integer", "minimum": 1 },
+          "auth_user_id": { "type": "string", "format": "uuid" },
+          "email": { "type": "string", "format": "email" },
+          "team_abbreviation": { "type": "string", "minLength": 2 },
+          "result": { "enum": ["pending", "win", "loss", "tie"] }
+        },
+        "anyOf": [
+          { "required": ["auth_user_id"] },
+          { "required": ["email"] }
+        ]
+      }
+    }
+  }
+}

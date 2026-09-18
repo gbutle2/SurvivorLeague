@@ -5,6 +5,7 @@ import { useActionState, useState, type ReactNode } from "react";
 import {
   activateSeason,
   createWeek,
+  generateSeasonCalendar,
   setWeekStatus,
   updateWeek,
   type WeekActionState,
@@ -29,6 +30,54 @@ type WeekCardModel = {
   editable: boolean;
   presentation: WeekPresentation;
 };
+
+export function SeasonCalendarForm({ weekCount }: { weekCount: number }) {
+  const [state, action, pending] = useActionState(
+    generateSeasonCalendar,
+    initialState,
+  );
+
+  const placeholder = JSON.stringify(
+    Array.from({ length: weekCount }, (_, index) => ({
+      week_number: index + 1,
+      label: `Week ${index + 1}`,
+      lock_date: "YYYY-MM-DD",
+      lock_time: "12:00",
+    })),
+    null,
+    2,
+  );
+
+  return (
+    <form
+      action={action}
+      className="space-y-3 rounded-2xl border border-emerald-300 bg-emerald-50/50 p-4 shadow-sm"
+    >
+      <h2 className="text-base font-semibold text-stone-900">
+        Configure season calendar
+      </h2>
+      <p className="text-sm leading-relaxed text-stone-700">
+        Provide all {weekCount} regular-season deadlines in Central Time as JSON.
+        Existing weeks are never overwritten. Safe to retry.
+      </p>
+      <Field label="Season calendar JSON (Central Time deadlines)" htmlFor="calendar-json">
+        <textarea
+          id="calendar-json"
+          name="calendar_json"
+          required
+          rows={12}
+          spellCheck={false}
+          placeholder={placeholder}
+          className={`${inputClass} min-h-48 font-mono text-sm`}
+        />
+      </Field>
+      <Feedback state={state} />
+      <button type="submit" disabled={pending} className={primaryButtonClass}>
+        {pending ? "Generating…" : `Generate weeks 1–${weekCount}`}
+      </button>
+    </form>
+  );
+}
 
 export function ActivateSeasonForm({
   year,
@@ -88,66 +137,68 @@ export function CreateWeekForm() {
   const [state, action, pending] = useActionState(createWeek, initialState);
 
   return (
-    <form
-      action={action}
-      className="space-y-3 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm"
-    >
-      <h2 className="text-base font-semibold text-stone-900">Create week</h2>
-      <p className="text-sm text-stone-600">
-        New weeks start as <strong>upcoming</strong>. Enter the lock deadline in
-        Central Time (America/Chicago). The deadline must be in the future.
-      </p>
+    <details className="rounded-2xl border border-stone-300 bg-stone-50 p-4">
+      <summary className="min-h-11 cursor-pointer text-sm font-semibold text-stone-800">
+        Exceptional: create a single week manually
+      </summary>
+      <form action={action} className="mt-3 space-y-3">
+        <p className="text-sm text-stone-600">
+          Prefer the full calendar generator. Use this only for rare corrections.
+          New weeks start as upcoming; deadline must be in the future (Central
+          Time).
+        </p>
 
-      <Field label="Week number (1–17)" htmlFor="create-week-number">
-        <input
-          id="create-week-number"
-          name="week_number"
-          type="number"
-          min={1}
-          max={17}
-          required
-          className={inputClass}
-        />
-      </Field>
-
-      <Field label="Label" htmlFor="create-label">
-        <input
-          id="create-label"
-          name="label"
-          type="text"
-          required
-          placeholder="Week 1"
-          className={inputClass}
-        />
-      </Field>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Lock date (Central Time)" htmlFor="create-lock-date">
+        <Field label="Week number (1–17)" htmlFor="create-week-number">
           <input
-            id="create-lock-date"
-            name="lock_date"
-            type="date"
+            id="create-week-number"
+            name="week_number"
+            type="number"
+            min={1}
+            max={17}
             required
             className={inputClass}
           />
         </Field>
-        <Field label="Lock time (Central Time)" htmlFor="create-lock-time">
+
+        <Field label="Label" htmlFor="create-label">
           <input
-            id="create-lock-time"
-            name="lock_time"
-            type="time"
+            id="create-label"
+            name="label"
+            type="text"
             required
+            placeholder="Week 1"
             className={inputClass}
           />
         </Field>
-      </div>
 
-      <Feedback state={state} />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Lock date (Central Time)" htmlFor="create-lock-date">
+            <input
+              id="create-lock-date"
+              name="lock_date"
+              type="date"
+              required
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Lock time (Central Time)" htmlFor="create-lock-time">
+            <input
+              id="create-lock-time"
+              name="lock_time"
+              type="time"
+              required
+              className={inputClass}
+            />
+          </Field>
+        </div>
 
-      <button type="submit" disabled={pending} className={primaryButtonClass}>
-        {pending ? "Creating…" : "Create week"}
-      </button>
-    </form>
+        <Feedback state={state} />
+
+        <button type="submit" disabled={pending} className={secondaryButtonClass}>
+          {pending ? "Creating…" : "Create single week"}
+        </button>
+      </form>
+    </details>
   );
 }
 

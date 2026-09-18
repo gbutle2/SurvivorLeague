@@ -13,7 +13,7 @@ import { mapPickMutationError } from "@/lib/picks/errors";
 import { setupSeasonBlocksPicks } from "@/lib/season/activation";
 import { createClient } from "@/lib/supabase/server";
 import { isLockedAt } from "@/lib/time/chicago";
-import { resolveOpenWeek } from "@/lib/weeks/open-week";
+import { resolveCurrentWeek } from "@/lib/weeks/current-week";
 
 export type PickActionState = {
   error: string | null;
@@ -71,22 +71,34 @@ export async function savePick(
     return { ...empty, error: "Database unavailable. Could not load weeks." };
   }
 
-  const open = resolveOpenWeek(weeks ?? []);
-  if (open.kind === "none") {
+  const current = resolveCurrentWeek(weeks ?? []);
+  if (current.kind === "none") {
     return {
       ...empty,
-      error: "No week is open for picks right now.",
+      error: "No week is available for picks right now.",
     };
   }
-  if (open.kind === "multiple") {
+  if (current.kind === "multiple_open") {
     return {
       ...empty,
       error:
         "Multiple weeks are marked open. Ask the commissioner to fix week configuration.",
     };
   }
+  if (current.kind === "informational") {
+    return {
+      ...empty,
+      error: `Week ${current.week.week_number} is upcoming. Picks open after the commissioner marks a week open.`,
+    };
+  }
+  if (current.kind === "open_expired" || !current.picksAllowed) {
+    return {
+      ...empty,
+      error: "This week is locked. Picks can no longer be changed.",
+    };
+  }
 
-  const week = open.week;
+  const week = current.week;
   if (isLockedAt(week.locks_at)) {
     return {
       ...empty,

@@ -11,7 +11,8 @@ import {
   usedTeamIds,
 } from "@/lib/picks/used-teams";
 import { createClient } from "@/lib/supabase/server";
-import { resolveOpenWeek } from "@/lib/weeks/open-week";
+import { resolveCurrentWeek } from "@/lib/weeks/current-week";
+import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
 
 export const metadata: Metadata = {
   title: "Team Availability | Sunday Survivor Picks",
@@ -33,10 +34,10 @@ export default async function AvailabilityPage() {
   const { context } = result;
   const supabase = await createClient();
 
-  const { data: weeks, error: weeksError } = await supabase
-    .from("weeks")
-    .select("id, week_number, label, locks_at, status")
-    .eq("season_id", context.season.id);
+  const { weeks, error: weeksError } = await loadSeasonWeeks(
+    supabase,
+    context.season.id,
+  );
 
   if (weeksError) {
     return (
@@ -48,9 +49,12 @@ export default async function AvailabilityPage() {
     );
   }
 
-  const weekIds = (weeks ?? []).map((week) => week.id);
-  const open = resolveOpenWeek(weeks ?? []);
-  const openWeekId = open.kind === "ok" ? open.week.id : null;
+  const weekIds = weeks.map((week) => week.id);
+  const current = resolveCurrentWeek(weeks);
+  const openWeekId =
+    current.kind === "actionable" || current.kind === "open_expired"
+      ? current.week.id
+      : null;
 
   const [{ data: teams, error: teamsError }, { data: picks, error: picksError }] =
     await Promise.all([
@@ -99,7 +103,7 @@ export default async function AvailabilityPage() {
       title="Team Availability"
       subtitle="Your regular-season teams only — other players’ picks stay hidden until lock."
     >
-      {open.kind === "multiple" ? (
+      {current.kind === "multiple_open" ? (
         <div className="mb-3">
           <StatusPanel title="Multiple open weeks" tone="danger">
             <p>

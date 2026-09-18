@@ -7,6 +7,8 @@ import { StatusPanel } from "@/components/status-panel";
 import { loadLeagueContext } from "@/lib/league/context";
 import { createClient } from "@/lib/supabase/server";
 import { formatCentralDateTime, isLockedAt } from "@/lib/time/chicago";
+import { resolveCurrentWeek } from "@/lib/weeks/current-week";
+import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
 
 export const metadata: Metadata = {
   title: "Pick History | Sunday Survivor Picks",
@@ -28,11 +30,10 @@ export default async function HistoryPage() {
   const { context } = result;
   const supabase = await createClient();
 
-  const { data: weeks, error: weeksError } = await supabase
-    .from("weeks")
-    .select("id, week_number, label, locks_at, status")
-    .eq("season_id", context.season.id)
-    .order("week_number", { ascending: true });
+  const { weeks: weekRows, error: weeksError } = await loadSeasonWeeks(
+    supabase,
+    context.season.id,
+  );
 
   if (weeksError) {
     return (
@@ -44,7 +45,7 @@ export default async function HistoryPage() {
     );
   }
 
-  const weekRows = weeks ?? [];
+  const current = resolveCurrentWeek(weekRows);
   const weekIds = weekRows.map((week) => week.id);
 
   const { data: picks, error: picksError } =
@@ -93,18 +94,43 @@ export default async function HistoryPage() {
       title="Pick History"
       subtitle={`${context.league.name} · ${context.season.year} regular season`}
     >
+      {current.kind === "actionable" ? (
+        <div className="mb-4">
+          <StatusPanel title="Current actionable week" tone="success">
+            <p>
+              Week {current.week.week_number} is open for picks. Historical rows
+              below use stored week status and deadlines.
+            </p>
+          </StatusPanel>
+        </div>
+      ) : current.kind === "multiple_open" ? (
+        <div className="mb-4">
+          <StatusPanel title="Configuration error" tone="danger">
+            <p>
+              Multiple weeks are marked open. Ask the commissioner to correct
+              week configuration.
+            </p>
+          </StatusPanel>
+        </div>
+      ) : null}
+
       {weekRows.length === 0 ? (
         <StatusPanel title="No weeks yet" tone="neutral">
-          <p>History will appear after the commissioner creates weeks.</p>
+          <p>History will appear after the season calendar is configured.</p>
         </StatusPanel>
       ) : (
         <ul className="space-y-3">
           {weekRows.map((week) => {
             const pick = pickByWeek.get(week.id) ?? null;
             const team = pick ? (teamById.get(pick.team_id) ?? null) : null;
-            const locked = isLockedAt(week.locks_at);
+            const locked =
+              isLockedAt(week.locks_at) ||
+              week.status === "locked" ||
+              week.status === "final";
             const stateLabel = locked
-              ? "Locked"
+              ? week.status === "final"
+                ? "Final"
+                : "Locked"
               : week.status === "open"
                 ? "Open"
                 : week.status;

@@ -21,6 +21,10 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { chicagoWallTimeToUtcIso } from "@/lib/time/chicago";
 import {
+  planSeasonCalendar,
+  type CalendarDeadlineInput,
+} from "@/lib/weeks/calendar";
+import {
   assertFutureDeadline,
   canEditWeekDetails,
   canTransitionWeekStatus,
@@ -129,6 +133,126 @@ export async function createWeek(
   return {
     error: null,
     success: `Week ${confirmed.row.week_number} created as upcoming.`,
+  };
+}
+
+/**
+ * Idempotent full-season calendar generation.
+ * Accepts JSON array of { week_number, label?, lock_date, lock_time } for 1..N.
+ * Existing weeks are never overwritten.
+ */
+export async function generateSeasonCalendar(
+  _prev: WeekActionState,
+  formData: FormData,
+): Promise<WeekActionState> {
+  const auth = await requireCommissionerContext();
+  if (!auth.ok) {
+    return { ...initialHelpers, error: auth.error };
+  }
+
+  const raw = String(formData.get("calendar_json") ?? "").trim();
+  if (!raw) {
+    return {
+      ...initialHelpers,
+      error: "Paste or submit the full season calendar (all week deadlines).",
+    };
+  }
+
+  let inputs: CalendarDeadlineInput[];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return { ...initialHelpers, error: "Calendar must be a JSON array." };
+    }
+    inputs = parsed.map((row) => {
+      const item = row as Record<string, unknown>;
+      return {
+        week_number: Number(item.week_number),
+        label:
+          typeof item.label === "string" ? item.label : undefined,
+        lock_date: String(item.lock_date ?? ""),
+        lock_time: String(item.lock_time ?? ""),
+      };
+    });
+  } catch {
+    return {
+      ...initialHelpers,
+      error: "Calendar JSON could not be parsed.",
+    };
+  }
+
+  const supabase = await createClient();
+  const { data: existing, error: existingError } = await supabase
+    .from("weeks")
+    .select("week_number, label, locks_at, status")
+    .eq("season_id", auth.context.season.id);
+
+  if (existingError) {
+    return {
+      ...initialHelpers,
+      error: "Could not load existing weeks before generating the calendar.",
+    };
+  }
+
+  const plan = planSeasonCalendar({
+    weekCount: auth.context.season.regularWeekCount,
+    inputs,
+    existing: existing ?? [],
+  });
+
+  if (!plan.ok) {
+    return { ...initialHelpers, error: plan.error };
+  }
+
+  if (plan.conflicts.length > 0) {
+    return {
+      ...initialHelpers,
+      error: plan.conflicts.map((c) => c.message).join(" "),
+    };
+  }
+
+  if (plan.weeksToInsert.length === 0) {
+    return {
+      error: null,
+      success: `Calendar already complete (${plan.skippedExisting.length} weeks present). Nothing to insert.`,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("weeks")
+    .insert(
+      plan.weeksToInsert.map((week) => ({
+        season_id: auth.context.season.id,
+        week_number: week.week_number,
+        label: week.label,
+        locks_at: week.locks_at,
+        status: week.status,
+      })),
+    )
+    .select("id, week_number");
+
+  if (error) {
+    return { ...initialHelpers, error: mapWeekMutationError(error) };
+  }
+
+  if (!data || data.length !== plan.weeksToInsert.length) {
+    return {
+      ...initialHelpers,
+      error:
+        "Calendar insert did not return every new week. Refresh and retry; duplicates were not intended.",
+    };
+  }
+
+  revalidateLeaguePaths();
+
+  const skippedNote =
+    plan.skippedExisting.length > 0
+      ? ` Skipped existing identical weeks: ${plan.skippedExisting.length}.`
+      : "";
+
+  return {
+    error: null,
+    success: `Created ${data.length} upcoming week(s).${skippedNote}`,
   };
 }
 

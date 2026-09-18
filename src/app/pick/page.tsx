@@ -9,7 +9,8 @@ import { loadLeagueContext } from "@/lib/league/context";
 import { usedTeamIds } from "@/lib/picks/used-teams";
 import { createClient } from "@/lib/supabase/server";
 import { formatCentralDateTime, isLockedAt } from "@/lib/time/chicago";
-import { resolveOpenWeek } from "@/lib/weeks/open-week";
+import { resolveCurrentWeek } from "@/lib/weeks/current-week";
+import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
 
 export const metadata: Metadata = {
   title: "Current Pick | Sunday Survivor Picks",
@@ -44,12 +45,10 @@ export default async function PickPage() {
   }
 
   const supabase = await createClient();
-
-  const { data: weeks, error: weeksError } = await supabase
-    .from("weeks")
-    .select("id, week_number, label, locks_at, status")
-    .eq("season_id", context.season.id)
-    .order("week_number", { ascending: true });
+  const { weeks, error: weeksError } = await loadSeasonWeeks(
+    supabase,
+    context.season.id,
+  );
 
   if (weeksError) {
     return (
@@ -61,24 +60,28 @@ export default async function PickPage() {
     );
   }
 
-  const open = resolveOpenWeek(weeks ?? []);
-  if (open.kind === "none") {
+  const current = resolveCurrentWeek(weeks);
+
+  if (current.kind === "none") {
     return (
       <AppShell title="Current Pick" subtitle={context.league.name}>
-        <StatusPanel title="No open week" tone="warning">
-          <p>There is no regular-season week open for submissions right now.</p>
+        <StatusPanel title="No weeks configured" tone="warning">
+          <p>
+            The season calendar is not ready yet. The commissioner needs to
+            configure all regular-season weeks.
+          </p>
         </StatusPanel>
       </AppShell>
     );
   }
 
-  if (open.kind === "multiple") {
+  if (current.kind === "multiple_open") {
     return (
       <AppShell title="Current Pick" subtitle={context.league.name}>
         <StatusPanel title="Multiple open weeks" tone="danger">
           <p>
             Configuration error: more than one week is marked open (
-            {open.weeks.map((week) => `Week ${week.week_number}`).join(", ")}
+            {current.weeks.map((week) => `Week ${week.week_number}`).join(", ")}
             ). Ask the commissioner to close extras before picks continue.
           </p>
         </StatusPanel>
@@ -86,8 +89,22 @@ export default async function PickPage() {
     );
   }
 
-  const week = open.week;
-  const locked = isLockedAt(week.locks_at);
+  if (current.kind === "informational") {
+    return (
+      <AppShell title="Current Pick" subtitle={context.league.name}>
+        <StatusPanel title="No open week yet" tone="warning">
+          <p>
+            Next up: Week {current.week.week_number} — {current.week.label}.
+            Deadline {formatCentralDateTime(current.week.locks_at)} (Central
+            Time). Picks open after the commissioner marks a week open.
+          </p>
+        </StatusPanel>
+      </AppShell>
+    );
+  }
+
+  const week = current.week;
+  const locked = !current.picksAllowed || isLockedAt(week.locks_at);
 
   const [{ data: teams, error: teamsError }, { data: seasonPicks, error: picksError }] =
     await Promise.all([
@@ -102,7 +119,7 @@ export default async function PickPage() {
         .eq("user_id", context.userId)
         .in(
           "week_id",
-          (weeks ?? []).map((item) => item.id),
+          weeks.map((item) => item.id),
         ),
     ]);
 
@@ -136,6 +153,16 @@ export default async function PickPage() {
       title="Current Pick"
       subtitle={`${context.league.name} · ${context.season.year}`}
     >
+      {current.kind === "open_expired" ? (
+        <div className="mb-3">
+          <StatusPanel title="Deadline passed" tone="warning">
+            <p>
+              The open week’s deadline has passed. Your selection is read-only
+              until the commissioner locks the week.
+            </p>
+          </StatusPanel>
+        </div>
+      ) : null}
       <PickForm
         teams={teamOptions}
         initialTeamId={currentPick?.team_id ?? null}

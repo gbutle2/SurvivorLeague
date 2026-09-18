@@ -7,6 +7,10 @@ import {
   isCommissioner,
   loadLeagueContext,
 } from "@/lib/league/context";
+import { createClient } from "@/lib/supabase/server";
+import { formatCentralDateTime } from "@/lib/time/chicago";
+import { resolveCurrentWeek } from "@/lib/weeks/current-week";
+import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
 
 export default async function HomePage() {
   const result = await loadLeagueContext();
@@ -55,6 +59,20 @@ export default async function HomePage() {
 
   const { context } = result;
   const commissioner = isCommissioner(context);
+  const supabase = await createClient();
+  const { weeks } = await loadSeasonWeeks(supabase, context.season.id);
+  const current = resolveCurrentWeek(weeks);
+
+  let weekSummary = "Season calendar not configured yet.";
+  if (current.kind === "actionable") {
+    weekSummary = `Current week: Week ${current.week.week_number} (open until ${formatCentralDateTime(current.week.locks_at)}).`;
+  } else if (current.kind === "open_expired") {
+    weekSummary = `Week ${current.week.week_number} is open but the deadline has passed.`;
+  } else if (current.kind === "informational") {
+    weekSummary = `Next upcoming: Week ${current.week.week_number} — picks not open yet.`;
+  } else if (current.kind === "multiple_open") {
+    weekSummary = "Configuration error: multiple weeks are marked open.";
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-6 sm:py-8">
@@ -83,6 +101,7 @@ export default async function HomePage() {
         <p className="mt-3 text-sm text-emerald-50/90">
           {context.league.name} · {context.season.year} ({context.season.status})
         </p>
+        <p className="mt-2 text-sm text-emerald-100/90">{weekSummary}</p>
       </section>
 
       <nav className="grid gap-3" aria-label="League sections">
@@ -114,7 +133,7 @@ export default async function HomePage() {
         {commissioner ? (
           <NavCard
             title="Commissioner"
-            description="Create and manage regular-season weeks, lock times, and open/closed status."
+            description="Configure the season calendar, deadlines, and open/lock weeks."
             href="/commissioner"
           />
         ) : null}

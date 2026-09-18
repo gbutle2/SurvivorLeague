@@ -26,4 +26,19 @@ describe("commissionerActionDenied", () => {
   it("allows commissioners", () => {
     assert.equal(commissionerActionDenied("commissioner"), null);
   });
+
+  it("unauthorized users cannot run commissioner calendar actions", () => {
+    assert.equal(
+      commissionerActionDenied("player"),
+      "Only the commissioner can manage weeks.",
+    );
+    assert.equal(
+      commissionerActionDenied(null),
+      "Only the commissioner can manage weeks.",
+    );
+    assert.equal(
+      commissionerActionDenied(undefined),
+      "Only the commissioner can manage weeks.",
+    );
+  });
 });

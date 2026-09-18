@@ -60,3 +60,18 @@ RETURNING id;
 INSERT INTO public.scoring_rules (season_id)
 VALUES ('<season-id>');
 ```
+
+## 5. Season calendar (Phase 2B)
+
+Do not create weeks one-by-one for a normal season.
+
+1. Activate scoring rules + season when ready
+2. On **Commissioner**, use **Configure season calendar** with all 17 Central Time deadlines as JSON
+3. Open the current week when players should pick; lock when the deadline passes
+
+Single-week create remains only under **Exceptional: create a single week manually**.
+
+See also:
+
+- [`import-bootstrap.md`](./import-bootstrap.md) — admin bootstrap import (not run in Phase 2B-A)
+- [`phase2b-week1-week2-target.md`](./phase2b-week1-week2-target.md) — documented Week 1/2 target fields

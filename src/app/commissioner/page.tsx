@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import {
   ActivateSeasonForm,
   CreateWeekForm,
+  SeasonCalendarForm,
   WeekManagerCard,
 } from "@/app/commissioner/week-manager";
 import { listSeasonWeeks } from "@/app/commissioner/actions";
@@ -15,12 +16,13 @@ import {
   loadLeagueContext,
 } from "@/lib/league/context";
 import { activationBlockedReason } from "@/lib/season/activation";
-import { formatCentralDateTime, isLockedAt } from "@/lib/time/chicago";
+import { formatCentralDateTime } from "@/lib/time/chicago";
+import { resolveCurrentWeek } from "@/lib/weeks/current-week";
 import {
   canEditWeekDetails,
   presentWeekState,
 } from "@/lib/weeks/lifecycle";
-import { resolveOpenWeek } from "@/lib/weeks/open-week";
+import { summarizeCalendar } from "@/lib/weeks/season-weeks";
 
 export const metadata: Metadata = {
   title: "Commissioner | Sunday Survivor Picks",
@@ -52,7 +54,8 @@ export default async function CommissionerPage() {
 
   const { context } = result;
   const { weeks, error: weeksError } = await listSeasonWeeks(context.season.id);
-  const open = resolveOpenWeek(weeks);
+  const current = resolveCurrentWeek(weeks);
+  const calendar = summarizeCalendar(weeks, context.season.regularWeekCount);
   const activationBlock =
     context.season.status === "setup"
       ? activationBlockedReason({
@@ -71,6 +74,12 @@ export default async function CommissionerPage() {
         <StatusPanel title="Season" tone="neutral">
           <p>
             Status: <strong>{context.season.status}</strong>
+          </p>
+          <p className="mt-1">
+            Calendar:{" "}
+            <strong>
+              {calendar.configured}/{calendar.expected} weeks configured
+            </strong>
           </p>
           <p className="mt-1">
             Timezone: <strong>Central Time (America/Chicago)</strong>
@@ -97,34 +106,51 @@ export default async function CommissionerPage() {
           />
         ) : null}
 
-        {open.kind === "multiple" ? (
+        {!calendar.complete ? (
+          <SeasonCalendarForm weekCount={context.season.regularWeekCount} />
+        ) : (
+          <StatusPanel title="Season calendar ready" tone="success">
+            <p>
+              All {calendar.expected} weeks are configured. Edit future deadlines
+              or open/lock weeks below as needed.
+            </p>
+          </StatusPanel>
+        )}
+
+        {current.kind === "multiple_open" ? (
           <StatusPanel title="Configuration error" tone="danger">
             <p>
               Multiple weeks are marked open (
-              {open.weeks.map((week) => `Week ${week.week_number}`).join(", ")}
-              ). Close extras so players have exactly one open week.
+              {current.weeks.map((week) => `Week ${week.week_number}`).join(", ")}
+              ). Lock extras so players have exactly one open week.
             </p>
           </StatusPanel>
-        ) : open.kind === "ok" ? (
-          isLockedAt(open.week.locks_at) ? (
-            <StatusPanel title="Open week deadline passed" tone="warning">
-              <p>
-                Week {open.week.week_number} is still marked open, but the
-                deadline ({formatCentralDateTime(open.week.locks_at)}) has
-                passed. Lock it when ready.
-              </p>
-            </StatusPanel>
-          ) : (
-            <StatusPanel title="Open for picks" tone="success">
-              <p>
-                Week {open.week.week_number}: {open.week.label}. Locks{" "}
-                {formatCentralDateTime(open.week.locks_at)}.
-              </p>
-            </StatusPanel>
-          )
+        ) : current.kind === "actionable" ? (
+          <StatusPanel title="Current actionable week" tone="success">
+            <p>
+              Week {current.week.week_number}: {current.week.label}. Locks{" "}
+              {formatCentralDateTime(current.week.locks_at)}.
+            </p>
+          </StatusPanel>
+        ) : current.kind === "open_expired" ? (
+          <StatusPanel title="Open week deadline passed" tone="warning">
+            <p>
+              Week {current.week.week_number} is still marked open, but the
+              deadline ({formatCentralDateTime(current.week.locks_at)}) has
+              passed. Lock it when ready.
+            </p>
+          </StatusPanel>
+        ) : current.kind === "informational" ? (
+          <StatusPanel title="Next upcoming week" tone="warning">
+            <p>
+              Week {current.week.week_number}: {current.week.label}. Deadline{" "}
+              {formatCentralDateTime(current.week.locks_at)}. Mark it open when
+              players should submit picks.
+            </p>
+          </StatusPanel>
         ) : (
-          <StatusPanel title="No open week" tone="warning">
-            <p>No week is currently open for player submissions.</p>
+          <StatusPanel title="No weeks yet" tone="warning">
+            <p>Configure the season calendar to continue.</p>
           </StatusPanel>
         )}
 
@@ -134,15 +160,13 @@ export default async function CommissionerPage() {
           </StatusPanel>
         ) : null}
 
-        <CreateWeekForm />
-
         <section className="space-y-3" aria-label="Season weeks">
           <h2 className="text-base font-semibold text-stone-900">
             Regular-season weeks
           </h2>
           {weeks.length === 0 ? (
-            <StatusPanel title="No weeks yet" tone="neutral">
-              <p>Create Week 1 to get started.</p>
+            <StatusPanel title="Calendar empty" tone="neutral">
+              <p>Use Configure season calendar above.</p>
             </StatusPanel>
           ) : (
             weeks.map((week) => {
@@ -169,6 +193,8 @@ export default async function CommissionerPage() {
             })
           )}
         </section>
+
+        <CreateWeekForm />
       </div>
     </AppShell>
   );
