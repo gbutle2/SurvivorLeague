@@ -143,8 +143,21 @@ BEGIN
   ) VALUES
     ('nflverse', 'p1-w1-kc-buf', 2026, 'regular', 1, v_team_kc, v_team_buf, now() + interval '2 days', 'scheduled'),
     ('nflverse', 'p1-w1-det-sf', 2026, 'regular', 1, v_team_det, v_team_sf, now() + interval '2 days', 'scheduled'),
+    ('nflverse', 'p1-w3-buf-det', 2026, 'regular', 3, v_team_buf, v_team_det, now(), 'scheduled'),
     ('nflverse', 'p1-w4-kc-det', 2026, 'regular', 4, v_team_kc, v_team_det, now() + interval '10 days', 'scheduled'),
-    ('nflverse', 'p1-w4-buf-sf', 2026, 'regular', 4, v_team_buf, v_team_sf, now() + interval '10 days', 'scheduled');
+    ('nflverse', 'p1-w4-buf-sf', 2026, 'regular', 4, v_team_buf, v_team_sf, now() + interval '10 days', 'scheduled'),
+    ('nflverse', 'p1-wb-mia-nyj', 2026, 'regular', 1,
+      (SELECT id FROM public.teams WHERE abbreviation = 'MIA'),
+      (SELECT id FROM public.teams WHERE abbreviation = 'NYJ'),
+      now() + interval '2 days', 'scheduled');
+
+  INSERT INTO public.games (
+    provider, provider_game_id, season_year, season_type, regular_week_number,
+    home_team_id, away_team_id, scheduled_kickoff_at, status,
+    home_score, away_score, winner_team_id
+  ) VALUES
+    ('nflverse', 'p1-w2-phi-kc', 2026, 'regular', 2, v_team_phi, v_team_kc,
+     now() - interval '2 hours', 'final', 24, 17, v_team_phi);
 
   INSERT INTO public.games (
     provider, provider_game_id, season_year, season_type, playoff_round,
@@ -362,8 +375,10 @@ SELECT throws_ok(
 SELECT tests.authenticate_as((SELECT commish FROM test_ids));
 SELECT lives_ok(
   format(
-    'UPDATE public.picks SET result = %L WHERE id = %L',
+    'UPDATE public.picks SET result = %L, result_source = %L, result_override_reason = %L WHERE id = %L',
     'win',
+    'commissioner',
+    'Phase1 commissioner override',
     (SELECT locked_pick_id FROM test_ids)
   ),
   'commissioner can set results'
@@ -553,8 +568,10 @@ SELECT ok(
 SELECT tests.authenticate_as((SELECT commish FROM test_ids));
 SELECT lives_ok(
   format(
-    'UPDATE public.picks SET result = %L WHERE id = %L',
+    'UPDATE public.picks SET result = %L, result_source = %L, result_override_reason = %L WHERE id = %L',
     'loss',
+    'commissioner',
+    'Phase1 commissioner result change',
     (SELECT locked_pick_id FROM test_ids)
   ),
   'commissioner can change a result'

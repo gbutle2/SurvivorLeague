@@ -107,7 +107,8 @@ export function PickForm({
         </h2>
         <p className="text-sm text-stone-600">{deadlineLabel}</p>
         <p className="text-xs text-stone-500">
-          Last schedule sync: {lastSyncLabel}
+          Last schedule sync: {lastSyncLabel} (daily refresh + commissioner
+          sync — not live scoring)
         </p>
       </header>
 

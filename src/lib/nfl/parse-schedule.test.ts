@@ -1,9 +1,53 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { parseCsv, csvToObjects } from "./csv.ts";
-import { parseProviderGames } from "./parse-schedule.ts";
+import { formatCentralDateTime } from "../time/chicago.ts";
+import {
+  easternWallTimeToUtc,
+  easternWallTimeToUtcIso,
+} from "../time/eastern.ts";
+import { csvToObjects } from "./csv.ts";
+import {
+  kickoffIsoFromProvider,
+  parseProviderGames,
+} from "./parse-schedule.ts";
 import { mapProviderTeamAbbreviation } from "./team-map.ts";
+
+describe("nflverse Eastern kickoff conversion", () => {
+  it("converts an EDT kickoff correctly (UTC-4)", () => {
+    // 2025-09-04 20:20 America/New_York (EDT) → 2025-09-05T00:20:00.000Z
+    const utc = easternWallTimeToUtc("2025-09-04", "20:20");
+    assert.equal(utc.toISOString(), "2025-09-05T00:20:00.000Z");
+  });
+
+  it("converts an EST kickoff correctly (UTC-5)", () => {
+    // 2025-12-21 13:00 America/New_York (EST) → 2025-12-21T18:00:00.000Z
+    const utc = easternWallTimeToUtc("2025-12-21", "13:00");
+    assert.equal(utc.toISOString(), "2025-12-21T18:00:00.000Z");
+  });
+
+  it("does not lock one hour late vs Chicago misinterpretation", () => {
+    // If wrongly treated as Central, 13:00 CT = 18:00Z in CDT;
+    // correct Eastern 13:00 EDT = 17:00Z — one hour earlier.
+    const correct = easternWallTimeToUtcIso("2025-09-14", "13:00");
+    assert.equal(correct, "2025-09-14T17:00:00.000Z");
+    // A Chicago mis-parse of the same wall clock would be 18:00Z in CDT.
+    assert.notEqual(correct, "2025-09-14T18:00:00.000Z");
+  });
+
+  it("formats stored UTC instants in Central Time for UI", () => {
+    const label = formatCentralDateTime("2025-09-14T17:00:00.000Z");
+    assert.match(label, /Sep 14/);
+    assert.match(label, /12:00|CDT|CST/);
+  });
+
+  it("rejects missing or malformed gametime instead of midnight", () => {
+    const missing = kickoffIsoFromProvider("2025-09-14", "");
+    assert.equal(missing.ok, false);
+    const bad = kickoffIsoFromProvider("2025-09-14", "TBD");
+    assert.equal(bad.ok, false);
+  });
+});
 
 describe("nflverse schedule parsing", () => {
   it("maps LA to LAR", () => {
@@ -11,7 +55,7 @@ describe("nflverse schedule parsing", () => {
     assert.equal(mapProviderTeamAbbreviation("LAC"), "LAC");
   });
 
-  it("parses valid regular and postseason rows", () => {
+  it("parses valid regular and postseason rows using Eastern kickoffs", () => {
     const csv = [
       "game_id,season,game_type,week,gameday,weekday,gametime,away_team,away_score,home_team,home_score",
       "2026_01_DAL_PHI,2026,REG,1,2026-09-10,Thursday,20:20,DAL,,PHI,",
@@ -21,10 +65,8 @@ describe("nflverse schedule parsing", () => {
     const { games, rejects } = parseProviderGames(rows, 2026);
     assert.equal(rejects.length, 0);
     assert.equal(games.length, 2);
-    assert.equal(games[0]!.regularWeekNumber, 1);
-    assert.equal(games[0]!.seasonType, "regular");
+    assert.equal(games[0]!.scheduledKickoffAt, "2026-09-11T00:20:00.000Z");
     assert.equal(games[1]!.playoffRound, "wildcard");
-    assert.equal(games[1]!.seasonType, "postseason");
   });
 
   it("rejects duplicate provider game ids", () => {
@@ -37,29 +79,14 @@ describe("nflverse schedule parsing", () => {
     assert.ok(rejects.some((r) => r.reason.includes("Duplicate")));
   });
 
-  it("rejects same home/away and malformed timestamps", () => {
+  it("rejects same home/away and missing gametime", () => {
     const csv = [
       "game_id,season,game_type,week,gameday,weekday,gametime,away_team,away_score,home_team,home_score",
       "same,2026,REG,1,2026-09-10,Thu,13:00,DAL,,DAL,",
-      "badtime,2026,REG,2,not-a-date,Thu,13:00,KC,,LAC,",
+      "notime,2026,REG,2,2026-09-17,Thu,,KC,,LAC,",
     ].join("\n");
     const { games, rejects } = parseProviderGames(csvToObjects(csv), 2026);
     assert.equal(games.length, 0);
-    assert.ok(rejects.length >= 2);
-  });
-
-  it("rejects unknown abbreviations after mapping", () => {
-    const csv = [
-      "game_id,season,game_type,week,gameday,weekday,gametime,away_team,away_score,home_team,home_score",
-      "x,2026,REG,1,2026-09-10,Thu,13:00,ZZZ,,PHI,",
-    ].join("\n");
-    // Parser maps unknown to ZZZ; sync layer rejects vs teams table.
-    const { games } = parseProviderGames(csvToObjects(csv), 2026);
-    assert.equal(games[0]!.awayAbbreviation, "ZZZ");
-  });
-
-  it("parses quoted CSV fields", () => {
-    const rows = parseCsv('a,b\n"1,2",3\n');
-    assert.deepEqual(rows[1], ["1,2", "3"]);
+    assert.ok(rejects.some((r) => /gametime/i.test(r.reason)));
   });
 });

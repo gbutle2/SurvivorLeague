@@ -148,7 +148,9 @@ export default async function CommissionerPage() {
           )}
           <p className="mt-2 text-xs text-stone-500">
             Vercel Hobby cron refreshes at most daily. Manual sync is the
-            fallback. Do not treat this as live scoring.
+            fallback. Kickoff changes sync before the stored kickoff;
+            post-kickoff changes need review. Not live scoring —
+            cancellations/no-contests may need commissioner action.
           </p>
         </StatusPanel>
 

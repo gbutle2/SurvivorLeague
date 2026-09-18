@@ -1,4 +1,4 @@
-import { chicagoWallTimeToUtcIso } from "../time/chicago.ts";
+import { easternWallTimeToUtcIso } from "../time/eastern.ts";
 import { NFLVERSE_REQUIRED_COLUMNS } from "./provider.ts";
 import { mapProviderTeamAbbreviation } from "./team-map.ts";
 
@@ -49,29 +49,47 @@ function parseOptionalInt(raw: string): number | null {
   return Number.isInteger(n) ? n : null;
 }
 
+/**
+ * Scores imply final. The CSV does not reliably expose live in-progress or
+ * explicit canceled/postponed states — do not invent them.
+ */
 function deriveStatus(
   homeScore: number | null,
   awayScore: number | null,
-  gameday: string,
-  gametime: string,
 ): ParsedGameStatus {
   if (homeScore !== null && awayScore !== null) return "final";
-  // Provider does not reliably expose live in-progress; treat incomplete as scheduled.
-  void gameday;
-  void gametime;
   return "scheduled";
 }
 
-function kickoffIso(gameday: string, gametime: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(gameday)) return null;
+/**
+ * nflverse gametime is Eastern (America/New_York), not Central.
+ * Missing/malformed gametime is rejected — never default to midnight.
+ */
+export function kickoffIsoFromProvider(
+  gameday: string,
+  gametime: string,
+): { ok: true; iso: string } | { ok: false; reason: string } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(gameday.trim())) {
+    return { ok: false, reason: `Malformed gameday (${gameday})` };
+  }
   const match = /^(\d{1,2}):(\d{2})$/.exec(gametime.trim());
-  const time = match
-    ? `${match[1]!.padStart(2, "0")}:${match[2]}`
-    : "00:00";
+  if (!match) {
+    return {
+      ok: false,
+      reason: `Missing or malformed gametime (${gametime || "empty"})`,
+    };
+  }
+  const time = `${match[1]!.padStart(2, "0")}:${match[2]}`;
   try {
-    return chicagoWallTimeToUtcIso(gameday, time);
-  } catch {
-    return null;
+    return { ok: true, iso: easternWallTimeToUtcIso(gameday.trim(), time) };
+  } catch (error) {
+    return {
+      ok: false,
+      reason:
+        error instanceof Error
+          ? error.message
+          : `Invalid Eastern kickoff (${gameday} ${gametime})`,
+    };
   }
 }
 
@@ -148,7 +166,7 @@ export function parseProviderGames(
       seasonType = "postseason";
       playoffRound = GAME_TYPES_POST[gameType]!;
     } else if (gameType === "PRE") {
-      continue; // ignore preseason
+      continue;
     } else {
       rejects.push({
         providerGameId,
@@ -176,42 +194,30 @@ export function parseProviderGames(
       continue;
     }
 
-    const gameday = row.gameday ?? "";
-    const gametime = row.gametime ?? "";
-    const scheduledKickoffAt = kickoffIso(gameday, gametime);
-    if (!scheduledKickoffAt) {
-      rejects.push({
-        providerGameId,
-        reason: `Malformed kickoff timestamp (${gameday} ${gametime})`,
-      });
+    const kickoff = kickoffIsoFromProvider(row.gameday ?? "", row.gametime ?? "");
+    if (!kickoff.ok) {
+      rejects.push({ providerGameId, reason: kickoff.reason });
       continue;
     }
 
     const homeScore = parseOptionalInt(row.home_score ?? "");
     const awayScore = parseOptionalInt(row.away_score ?? "");
-    if (
-      (homeScore === null) !== (awayScore === null) &&
-      (row.home_score || row.away_score)
-    ) {
-      // One-sided score is malformed unless both empty.
-      if (row.home_score !== "" || row.away_score !== "") {
-        // allow one empty while other empty already handled; if only one set:
-        if ((homeScore === null) !== (awayScore === null)) {
-          rejects.push({
-            providerGameId,
-            reason: "Partial scores are invalid",
-          });
-          continue;
-        }
+    if ((homeScore === null) !== (awayScore === null)) {
+      if ((row.home_score ?? "") !== "" || (row.away_score ?? "") !== "") {
+        rejects.push({
+          providerGameId,
+          reason: "Partial scores are invalid",
+        });
+        continue;
       }
     }
 
-    const status = deriveStatus(homeScore, awayScore, gameday, gametime);
+    const status = deriveStatus(homeScore, awayScore);
     let winnerAbbreviation: string | null = null;
     if (status === "final" && homeScore !== null && awayScore !== null) {
       if (homeScore > awayScore) winnerAbbreviation = homeAbbreviation;
       else if (awayScore > homeScore) winnerAbbreviation = awayAbbreviation;
-      else winnerAbbreviation = null; // tie
+      else winnerAbbreviation = null;
     }
 
     games.push({
@@ -222,7 +228,7 @@ export function parseProviderGames(
       playoffRound,
       homeAbbreviation,
       awayAbbreviation,
-      scheduledKickoffAt,
+      scheduledKickoffAt: kickoff.iso,
       status,
       homeScore,
       awayScore,

@@ -32,9 +32,41 @@ type GameRow = {
   home_score: number | null;
   away_score: number | null;
   winner_team_id: string | null;
+  home_team_id: string;
+  away_team_id: string;
+  season_type: string;
+  regular_week_number: number | null;
+  playoff_round: string | null;
 };
 
-type Queryable = Pick<pg.Pool | pg.Client, "query">;
+/**
+ * Dedicated connection for schedule sync transactions.
+ * Intentionally incompatible with pg.Pool (Pools expose totalCount).
+ */
+export type NflSyncClient = Pick<pg.Client, "query"> & {
+  totalCount?: never;
+};
+
+export type SyncNflScheduleOptions = {
+  seasonYear: number;
+  leagueSeasonId?: string | null;
+  now?: Date;
+  /** Injected CSV body for tests; production fetches the fixed URL. */
+  csvText?: string;
+  /** Injected freshness ISO for tests. */
+  sourceFreshnessAt?: string | null;
+  /** Test-only: throw after schedule writes, before success audit insert. */
+  failBeforeSuccessAudit?: boolean;
+};
+
+export function assertDedicatedSyncClient(client: NflSyncClient): void {
+  const maybePool = client as unknown as { totalCount?: unknown };
+  if (typeof maybePool.totalCount === "number") {
+    throw new Error(
+      "syncNflSchedule requires a dedicated pg.Client, not a pg.Pool",
+    );
+  }
+}
 
 async function fetchText(
   url: string,
@@ -88,30 +120,248 @@ function winnerId(
   return byAbbrev.get(game.winnerAbbreviation) ?? null;
 }
 
+async function insertSyncRun(
+  client: NflSyncClient,
+  args: {
+    seasonYear: number;
+    status: "succeeded" | "failed" | "rejected";
+    inserted?: number;
+    updated?: number;
+    skipped?: number;
+    rejected?: number;
+    sourceFreshnessAt: string | null;
+    errorSummary?: string | null;
+    warningSummary?: string | null;
+  },
+): Promise<string> {
+  const result = await client.query<{ id: string }>(
+    `INSERT INTO public.schedule_sync_runs (
+       provider, season_year, status, completed_at,
+       inserted_count, updated_count, skipped_count, rejected_count,
+       source_freshness_at, error_summary, warning_summary
+     ) VALUES (
+       $1, $2, $3, now(),
+       $4, $5, $6, $7,
+       $8, $9, $10
+     )
+     RETURNING id`,
+    [
+      NFLVERSE_PROVIDER,
+      args.seasonYear,
+      args.status,
+      args.inserted ?? 0,
+      args.updated ?? 0,
+      args.skipped ?? 0,
+      args.rejected ?? 0,
+      args.sourceFreshnessAt,
+      args.errorSummary ?? null,
+      args.warningSummary ?? null,
+    ],
+  );
+  return result.rows[0]!.id;
+}
+
+async function writeFailureAuditBestEffort(
+  client: NflSyncClient,
+  args: Parameters<typeof insertSyncRun>[1],
+): Promise<string> {
+  try {
+    await client.query("BEGIN");
+    const runId = await insertSyncRun(client, args);
+    await client.query("COMMIT");
+    return runId;
+  } catch {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // ignore
+    }
+    return "";
+  }
+}
+
+async function applyAutomaticPickResults(
+  client: NflSyncClient,
+  seasonYear: number,
+): Promise<void> {
+  // Regular picks: pending + auto source only (never overwrite commissioner).
+  await client.query(
+    `UPDATE public.picks p
+     SET result = CASE
+           WHEN g.winner_team_id IS NULL THEN 'tie'::public.pick_result
+           WHEN g.winner_team_id = p.team_id THEN 'win'::public.pick_result
+           ELSE 'loss'::public.pick_result
+         END,
+         result_source = 'auto',
+         game_id = g.id,
+         updated_at = now()
+     FROM public.weeks w
+     INNER JOIN public.seasons s ON s.id = w.season_id
+     INNER JOIN public.games g
+       ON g.season_year = s.year
+      AND g.season_type = 'regular'
+      AND g.regular_week_number = w.week_number
+      AND g.status = 'final'
+      AND g.manual_override = false
+     WHERE p.week_id = w.id
+       AND s.year = $1
+       AND (g.home_team_id = p.team_id OR g.away_team_id = p.team_id)
+       AND p.result = 'pending'
+       AND p.result_source = 'auto'`,
+    [seasonYear],
+  );
+
+  await client.query(
+    `UPDATE public.playoff_picks pp
+     SET result = CASE
+           WHEN g.winner_team_id IS NULL THEN 'tie'::public.pick_result
+           WHEN g.winner_team_id = pp.team_id THEN 'win'::public.pick_result
+           ELSE 'loss'::public.pick_result
+         END,
+         points_awarded = CASE
+           WHEN g.winner_team_id = pp.team_id THEN pr.points
+           ELSE 0
+         END,
+         result_source = 'auto',
+         game_id = g.id,
+         updated_at = now()
+     FROM public.playoff_rounds pr
+     INNER JOIN public.seasons s ON s.id = pr.season_id
+     INNER JOIN public.games g
+       ON g.season_year = s.year
+      AND g.season_type = 'postseason'
+      AND g.playoff_round = pr.round_code
+      AND g.status = 'final'
+      AND g.manual_override = false
+     WHERE pp.playoff_round_id = pr.id
+       AND s.year = $1
+       AND (g.home_team_id = pp.team_id OR g.away_team_id = pp.team_id)
+       AND pp.result = 'pending'
+       AND pp.result_source = 'auto'`,
+    [seasonYear],
+  );
+}
+
 /**
  * Atomic NFL schedule sync for one season year.
- * Uses a transaction + advisory lock. Never partially applies.
+ *
+ * Network fetch/validate happens BEFORE BEGIN so provider I/O never holds a
+ * database transaction. Success audit is written inside the same transaction
+ * as schedule/result changes; failure of that insert rolls everything back.
  */
 export async function syncNflSchedule(
-  client: Queryable,
-  options: {
-    seasonYear: number;
-    leagueSeasonId?: string | null;
-    now?: Date;
-  },
+  client: NflSyncClient,
+  options: SyncNflScheduleOptions,
 ): Promise<SyncResult> {
+  assertDedicatedSyncClient(client);
+
   const now = options.now ?? new Date();
   const seasonYear = options.seasonYear;
   let inserted = 0;
   let updated = 0;
   let skipped = 0;
   let rejected = 0;
-  let sourceFreshnessAt: string | null = null;
+  let sourceFreshnessAt: string | null = options.sourceFreshnessAt ?? null;
   let warningSummary: string | null = null;
 
+  // --- Fetch + validate outside any transaction ---
+  let parsed: ParsedProviderGame[] = [];
+  let rejects: Awaited<ReturnType<typeof parseProviderGames>>["rejects"] = [];
+
+  try {
+    if (options.sourceFreshnessAt === undefined) {
+      sourceFreshnessAt = await fetchSourceFreshness();
+    }
+    const csvText =
+      options.csvText ??
+      (await fetchText(
+        NFLVERSE_SCHEDULES_CSV_URL,
+        NFLVERSE_FETCH_TIMEOUT_MS,
+        NFLVERSE_MAX_BYTES,
+      ));
+    const rows = csvToObjects(csvText);
+    const parsedResult = parseProviderGames(rows, seasonYear);
+    parsed = parsedResult.games;
+    rejects = parsedResult.rejects;
+    rejected = rejects.length;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message.slice(0, 2000) : String(error);
+    const runId = await writeFailureAuditBestEffort(client, {
+      seasonYear,
+      status: "failed",
+      rejected: 0,
+      sourceFreshnessAt,
+      errorSummary: message,
+    });
+    return {
+      runId,
+      status: "failed",
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+      rejected: 0,
+      sourceFreshnessAt,
+      errorSummary: message,
+      warningSummary: null,
+    };
+  }
+
+  if (parsed.length === 0) {
+    const summary = `No valid games for season ${seasonYear}. Rejects: ${rejects.length}`;
+    const runId = await writeFailureAuditBestEffort(client, {
+      seasonYear,
+      status: "rejected",
+      rejected,
+      sourceFreshnessAt,
+      errorSummary: summary,
+    });
+    return {
+      runId,
+      status: "rejected",
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+      rejected,
+      sourceFreshnessAt,
+      errorSummary: summary,
+      warningSummary: null,
+    };
+  }
+
+  const fatalRejects = rejects.filter(
+    (r) =>
+      r.reason.includes("Duplicate") ||
+      r.reason.includes("Missing required") ||
+      r.reason.includes("Empty schedule"),
+  );
+  if (fatalRejects.length > 0) {
+    const message = `Fatal provider validation: ${fatalRejects
+      .map((r) => r.reason)
+      .join("; ")}`;
+    const runId = await writeFailureAuditBestEffort(client, {
+      seasonYear,
+      status: "failed",
+      rejected,
+      sourceFreshnessAt,
+      errorSummary: message,
+    });
+    return {
+      runId,
+      status: "failed",
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+      rejected,
+      sourceFreshnessAt,
+      errorSummary: message,
+      warningSummary: null,
+    };
+  }
+
+  // --- Apply inside one client transaction ---
   await client.query("BEGIN");
   try {
-    // Serialize overlapping sync jobs for this season year.
     const lockKey = 420_000_000 + (seasonYear % 100_000);
     const lock = await client.query<{ locked: boolean }>(
       "SELECT pg_try_advisory_xact_lock($1) AS locked",
@@ -119,38 +369,13 @@ export async function syncNflSchedule(
     );
     if (!lock.rows[0]?.locked) {
       await client.query("ROLLBACK");
-      return {
-        runId: "",
-        status: "rejected",
-        inserted: 0,
-        updated: 0,
-        skipped: 0,
-        rejected: 0,
-        sourceFreshnessAt: null,
-        errorSummary: "Another schedule sync is already running for this season.",
-        warningSummary: null,
-      };
-    }
-
-    sourceFreshnessAt = await fetchSourceFreshness();
-    const csvText = await fetchText(
-      NFLVERSE_SCHEDULES_CSV_URL,
-      NFLVERSE_FETCH_TIMEOUT_MS,
-      NFLVERSE_MAX_BYTES,
-    );
-    const rows = csvToObjects(csvText);
-    const { games: parsed, rejects } = parseProviderGames(rows, seasonYear);
-    rejected = rejects.length;
-
-    if (parsed.length === 0) {
-      await client.query("ROLLBACK");
-      const summary = `No valid games for season ${seasonYear}. Rejects: ${rejects.length}`;
-      const runId = await insertSyncRun(client, {
+      const runId = await writeFailureAuditBestEffort(client, {
         seasonYear,
         status: "rejected",
-        rejected,
+        rejected: 0,
         sourceFreshnessAt,
-        errorSummary: summary,
+        errorSummary:
+          "Another schedule sync is already running for this season.",
       });
       return {
         runId,
@@ -158,25 +383,15 @@ export async function syncNflSchedule(
         inserted: 0,
         updated: 0,
         skipped: 0,
-        rejected,
+        rejected: 0,
         sourceFreshnessAt,
-        errorSummary: summary,
+        errorSummary:
+          "Another schedule sync is already running for this season.",
         warningSummary: null,
       };
     }
 
-    const fatalRejects = rejects.filter(
-      (r) =>
-        r.reason.includes("Duplicate") ||
-        r.reason.includes("Missing required") ||
-        r.reason.includes("Empty schedule"),
-    );
-    if (fatalRejects.length > 0) {
-      throw new Error(
-        `Fatal provider validation: ${fatalRejects.map((r) => r.reason).join("; ")}`,
-      );
-    }
-
+    // Revalidate team map against current DB state under the lock.
     const teams = await client.query<TeamRow>(
       "SELECT id, abbreviation FROM public.teams WHERE active = true",
     );
@@ -201,7 +416,8 @@ export async function syncNflSchedule(
 
     const existing = await client.query<GameRow>(
       `SELECT id, provider_game_id, scheduled_kickoff_at, status, manual_override,
-              home_score, away_score, winner_team_id
+              home_score, away_score, winner_team_id,
+              home_team_id, away_team_id, season_type, regular_week_number, playoff_round
        FROM public.games
        WHERE provider = $1 AND season_year = $2`,
       [NFLVERSE_PROVIDER, seasonYear],
@@ -248,22 +464,19 @@ export async function syncNflSchedule(
         continue;
       }
 
+      /**
+       * manual_override freezes ALL provider-managed schedule/result fields.
+       * Only last_synced_at advances so operators can see the sync attempted.
+       */
       if (prior.manual_override) {
         skipped += 1;
         warnings.push(
-          `Preserved manual override for ${game.providerGameId}`,
+          `Preserved manual override (schedule+result frozen) for ${game.providerGameId}`,
         );
         await client.query(
-          `UPDATE public.games
-           SET status = $2,
-               home_score = $3,
-               away_score = $4,
-               winner_team_id = $5,
-               last_synced_at = now()
-           WHERE id = $1`,
-          [prior.id, game.status, game.homeScore, game.awayScore, winId],
+          `UPDATE public.games SET last_synced_at = now() WHERE id = $1`,
+          [prior.id],
         );
-        updated += 1;
         continue;
       }
 
@@ -295,6 +508,8 @@ export async function syncNflSchedule(
         }
       }
 
+      // Provider CSV does not reliably encode cancellations; flag when status
+      // would change to canceled only if we ever receive that signal.
       if (game.status === "canceled" && prior.status !== "canceled") {
         await client.query(
           `INSERT INTO public.schedule_review_items
@@ -304,7 +519,7 @@ export async function syncNflSchedule(
             seasonYear,
             prior.id,
             game.providerGameId,
-            "Game canceled/no-contest; commissioner resolution required for affected picks",
+            "Canceled/no-contest signal received; commissioner resolution required",
             prior.status,
             game.status,
           ],
@@ -439,7 +654,9 @@ export async function syncNflSchedule(
         .join(" | ")
         .slice(0, 2000) || null;
 
-    await client.query("COMMIT");
+    if (options.failBeforeSuccessAudit) {
+      throw new Error("Injected success-audit failure (test)");
+    }
 
     const runId = await insertSyncRun(client, {
       seasonYear,
@@ -451,6 +668,8 @@ export async function syncNflSchedule(
       sourceFreshnessAt,
       warningSummary,
     });
+
+    await client.query("COMMIT");
 
     return {
       runId,
@@ -471,7 +690,7 @@ export async function syncNflSchedule(
     } catch {
       // ignore
     }
-    const runId = await insertSyncRun(client, {
+    const runId = await writeFailureAuditBestEffort(client, {
       seasonYear,
       status: "failed",
       rejected,
@@ -490,105 +709,4 @@ export async function syncNflSchedule(
       warningSummary: null,
     };
   }
-}
-
-async function insertSyncRun(
-  client: Queryable,
-  args: {
-    seasonYear: number;
-    status: "succeeded" | "failed" | "rejected";
-    inserted?: number;
-    updated?: number;
-    skipped?: number;
-    rejected?: number;
-    sourceFreshnessAt: string | null;
-    errorSummary?: string | null;
-    warningSummary?: string | null;
-  },
-): Promise<string> {
-  const result = await client.query<{ id: string }>(
-    `INSERT INTO public.schedule_sync_runs (
-       provider, season_year, status, completed_at,
-       inserted_count, updated_count, skipped_count, rejected_count,
-       source_freshness_at, error_summary, warning_summary
-     ) VALUES (
-       $1, $2, $3, now(),
-       $4, $5, $6, $7,
-       $8, $9, $10
-     )
-     RETURNING id`,
-    [
-      NFLVERSE_PROVIDER,
-      args.seasonYear,
-      args.status,
-      args.inserted ?? 0,
-      args.updated ?? 0,
-      args.skipped ?? 0,
-      args.rejected ?? 0,
-      args.sourceFreshnessAt,
-      args.errorSummary ?? null,
-      args.warningSummary ?? null,
-    ],
-  );
-  return result.rows[0]!.id;
-}
-
-async function applyAutomaticPickResults(
-  client: Queryable,
-  seasonYear: number,
-): Promise<void> {
-  // Regular picks: pending + auto source only.
-  await client.query(
-    `UPDATE public.picks p
-     SET result = CASE
-           WHEN g.winner_team_id IS NULL THEN 'tie'::public.pick_result
-           WHEN g.winner_team_id = p.team_id THEN 'win'::public.pick_result
-           ELSE 'loss'::public.pick_result
-         END,
-         result_source = 'auto',
-         game_id = g.id,
-         updated_at = now()
-     FROM public.weeks w
-     INNER JOIN public.seasons s ON s.id = w.season_id
-     INNER JOIN public.games g
-       ON g.season_year = s.year
-      AND g.season_type = 'regular'
-      AND g.regular_week_number = w.week_number
-      AND g.status = 'final'
-      AND (g.home_team_id = p.team_id OR g.away_team_id = p.team_id)
-     WHERE p.week_id = w.id
-       AND s.year = $1
-       AND p.result = 'pending'
-       AND p.result_source = 'auto'`,
-    [seasonYear],
-  );
-
-  await client.query(
-    `UPDATE public.playoff_picks pp
-     SET result = CASE
-           WHEN g.winner_team_id IS NULL THEN 'tie'::public.pick_result
-           WHEN g.winner_team_id = pp.team_id THEN 'win'::public.pick_result
-           ELSE 'loss'::public.pick_result
-         END,
-         points_awarded = CASE
-           WHEN g.winner_team_id = pp.team_id THEN pr.points
-           ELSE 0
-         END,
-         result_source = 'auto',
-         game_id = g.id,
-         updated_at = now()
-     FROM public.playoff_rounds pr
-     INNER JOIN public.seasons s ON s.id = pr.season_id
-     INNER JOIN public.games g
-       ON g.season_year = s.year
-      AND g.season_type = 'postseason'
-      AND g.playoff_round = pr.round_code
-      AND g.status = 'final'
-      AND (g.home_team_id = pp.team_id OR g.away_team_id = pp.team_id)
-     WHERE pp.playoff_round_id = pr.id
-       AND s.year = $1
-       AND pp.result = 'pending'
-       AND pp.result_source = 'auto'`,
-    [seasonYear],
-  );
 }

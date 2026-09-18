@@ -133,7 +133,7 @@ export async function savePick(
   if (existingPick) {
     const { data: updated, error } = await supabase
       .from("picks")
-      .update({ team_id: teamId, game_id: game.id })
+      .update({ team_id: teamId })
       .eq("id", existingPick.id)
       .eq("user_id", userId)
       .select("id, team_id")
@@ -164,7 +164,6 @@ export async function savePick(
       week_id: week.id,
       user_id: userId,
       team_id: teamId,
-      game_id: game.id,
       result: "pending",
     })
     .select("id, team_id")

@@ -20,7 +20,10 @@ export function SyncNflScheduleForm({ seasonYear }: { seasonYear: number }) {
       <p className="text-sm text-stone-600">
         Pulls the fixed nflverse schedules release for {seasonYear}, upserts
         games, ensures weeks 1–18 and playoff rounds, and applies automatic
-        pending-pick results for final games. Community data — not live scoring.
+        pending-pick results for final games. Kickoffs update before the stored
+        kickoff; post-kickoff changes need review. Scores refresh daily plus this
+        manual sync — not live scoring. Cancellations/no-contests may need
+        commissioner action.
       </p>
       {state.error ? (
         <p className="text-sm text-rose-800" role="alert">

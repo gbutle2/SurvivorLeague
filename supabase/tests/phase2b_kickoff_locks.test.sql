@@ -121,7 +121,7 @@ SELECT throws_ok(
     'INSERT INTO public.picks (week_id, user_id, team_id) VALUES (%L, %L, %L)',
     (SELECT w1 FROM kick_ids), (SELECT player FROM kick_ids), (SELECT team_bye FROM kick_ids)
   ),
-  '42501', NULL, 'bye team cannot be picked'
+  '23514', NULL, 'bye team cannot be picked'
 );
 
 SELECT throws_ok(
@@ -154,7 +154,7 @@ SELECT throws_ok(
     (SELECT w2 FROM kick_ids), (SELECT player FROM kick_ids),
     (SELECT id FROM public.teams WHERE abbreviation = 'DET' LIMIT 1)
   ),
-  '42501', NULL, 'later NFL week cannot be picked early'
+  '23514', NULL, 'later NFL week cannot be picked early'
 );
 
 SELECT tests.clear_auth();
@@ -211,8 +211,9 @@ SELECT ok(
 SELECT tests.authenticate_as((SELECT commissioner FROM kick_ids));
 SELECT lives_ok(
   format(
-    'UPDATE public.picks SET result = %L WHERE week_id = %L AND user_id = %L',
-    'win', (SELECT w1 FROM kick_ids), (SELECT player FROM kick_ids)
+    'UPDATE public.picks SET result = %L, result_source = %L, result_override_reason = %L WHERE week_id = %L AND user_id = %L',
+    'win', 'commissioner', 'Kickoff lock test override',
+    (SELECT w1 FROM kick_ids), (SELECT player FROM kick_ids)
   ),
   'commissioner can set pick results'
 );

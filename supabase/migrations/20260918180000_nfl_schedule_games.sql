@@ -113,19 +113,136 @@ CREATE INDEX games_playoff_round_idx
 CREATE INDEX games_kickoff_idx
   ON public.games (scheduled_kickoff_at);
 
--- One appearance per team per regular week / playoff round (non-canceled).
-CREATE UNIQUE INDEX games_team_once_regular_home
-  ON public.games (season_year, regular_week_number, home_team_id)
-  WHERE season_type = 'regular' AND status <> 'canceled';
-CREATE UNIQUE INDEX games_team_once_regular_away
-  ON public.games (season_year, regular_week_number, away_team_id)
-  WHERE season_type = 'regular' AND status <> 'canceled';
-CREATE UNIQUE INDEX games_team_once_playoff_home
-  ON public.games (season_year, playoff_round, home_team_id)
-  WHERE season_type = 'postseason' AND status <> 'canceled';
-CREATE UNIQUE INDEX games_team_once_playoff_away
-  ON public.games (season_year, playoff_round, away_team_id)
-  WHERE season_type = 'postseason' AND status <> 'canceled';
+-- Normalized participants: one non-canceled appearance per team per week/round.
+-- Canceled games do not hold participant rows, allowing a replacement game.
+CREATE TABLE public.game_participants (
+  game_id UUID NOT NULL REFERENCES public.games (id) ON DELETE CASCADE,
+  team_id UUID NOT NULL REFERENCES public.teams (id),
+  season_year INTEGER NOT NULL,
+  season_type public.nfl_season_type NOT NULL,
+  regular_week_number INTEGER NULL,
+  playoff_round public.playoff_round_code NULL,
+  PRIMARY KEY (game_id, team_id),
+  CONSTRAINT game_participants_regular_fields CHECK (
+    (
+      season_type = 'regular'
+      AND regular_week_number IS NOT NULL
+      AND playoff_round IS NULL
+    )
+    OR (
+      season_type = 'postseason'
+      AND playoff_round IS NOT NULL
+      AND regular_week_number IS NULL
+    )
+  )
+);
+
+CREATE UNIQUE INDEX game_participants_one_regular_team
+  ON public.game_participants (season_year, regular_week_number, team_id)
+  WHERE season_type = 'regular';
+
+CREATE UNIQUE INDEX game_participants_one_playoff_team
+  ON public.game_participants (season_year, playoff_round, team_id)
+  WHERE season_type = 'postseason';
+
+CREATE OR REPLACE FUNCTION public.sync_game_participants(p_game public.games)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_first UUID;
+  v_second UUID;
+  v_scope TEXT;
+BEGIN
+  DELETE FROM public.game_participants WHERE game_id = p_game.id;
+
+  IF p_game.status = 'canceled' THEN
+    RETURN;
+  END IF;
+
+  -- Serialize concurrent participant claims; lock team ids in sorted order.
+  IF p_game.home_team_id::text < p_game.away_team_id::text THEN
+    v_first := p_game.home_team_id;
+    v_second := p_game.away_team_id;
+  ELSE
+    v_first := p_game.away_team_id;
+    v_second := p_game.home_team_id;
+  END IF;
+
+  v_scope :=
+    'game_part/' || p_game.season_year::text || '/' || p_game.season_type::text
+    || '/' || coalesce(p_game.regular_week_number::text, p_game.playoff_round::text);
+
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended(v_scope || '/' || v_first::text, 0)
+  );
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended(v_scope || '/' || v_second::text, 0)
+  );
+
+  IF EXISTS (
+    SELECT 1 FROM public.game_participants gp
+    WHERE gp.season_year = p_game.season_year
+      AND gp.season_type = p_game.season_type
+      AND gp.team_id IN (p_game.home_team_id, p_game.away_team_id)
+      AND (
+        (p_game.season_type = 'regular'
+          AND gp.regular_week_number = p_game.regular_week_number)
+        OR (p_game.season_type = 'postseason'
+          AND gp.playoff_round = p_game.playoff_round)
+      )
+      AND gp.game_id <> p_game.id
+  ) THEN
+    RAISE EXCEPTION 'Team already appears in another non-canceled game for this week/round'
+      USING ERRCODE = 'unique_violation';
+  END IF;
+
+  INSERT INTO public.game_participants (
+    game_id, team_id, season_year, season_type, regular_week_number, playoff_round
+  ) VALUES
+    (p_game.id, p_game.home_team_id, p_game.season_year, p_game.season_type,
+     p_game.regular_week_number, p_game.playoff_round),
+    (p_game.id, p_game.away_team_id, p_game.season_year, p_game.season_type,
+     p_game.regular_week_number, p_game.playoff_round);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.games_maintain_participants()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM public.game_participants WHERE game_id = OLD.id;
+    RETURN OLD;
+  END IF;
+  PERFORM public.sync_game_participants(NEW);
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER games_maintain_participants
+AFTER INSERT OR UPDATE OF
+  home_team_id, away_team_id, season_year, season_type,
+  regular_week_number, playoff_round, status
+ON public.games
+FOR EACH ROW
+EXECUTE FUNCTION public.games_maintain_participants();
+
+CREATE TRIGGER games_delete_participants
+AFTER DELETE ON public.games
+FOR EACH ROW
+EXECUTE FUNCTION public.games_maintain_participants();
+
+COMMENT ON TABLE public.game_participants IS
+  'One non-canceled team appearance per regular week or playoff round. Canceled games release slots.';
+
+COMMENT ON COLUMN public.games.manual_override IS
+  'When true, automatic sync freezes ALL provider-managed fields on this game (schedule and results).';
 
 CREATE TRIGGER games_set_updated_at
 BEFORE UPDATE ON public.games
@@ -194,6 +311,314 @@ ALTER TABLE public.playoff_picks
 
 CREATE INDEX picks_game_id_idx ON public.picks (game_id);
 CREATE INDEX playoff_picks_game_id_idx ON public.playoff_picks (game_id);
+
+ALTER TABLE public.game_participants ENABLE ROW LEVEL SECURITY;
+-- No authenticated write policies: maintained only via games triggers / server sync.
+
+-- ---------------------------------------------------------------------------
+-- Derive game_id and protect scoring provenance from authenticated players.
+-- Unauthenticated server paths (schedule sync / bootstrap) remain able to
+-- update auto results without weakening player protections.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.enforce_regular_pick_game_and_provenance()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_game public.games%ROWTYPE;
+  v_is_commissioner BOOLEAN := false;
+BEGIN
+  -- Identity mutations are rejected by update_guards; skip game lookup so that
+  -- immutability errors surface with a stable privilege error code.
+  IF TG_OP = 'UPDATE'
+     AND auth.uid() IS NOT NULL
+     AND NEW.week_id IS DISTINCT FROM OLD.week_id THEN
+    RETURN NEW;
+  END IF;
+
+  v_game := public.game_for_regular_team(
+    public.season_year_for_week(NEW.week_id),
+    public.week_number_for_week(NEW.week_id),
+    NEW.team_id
+  );
+
+  IF v_game.id IS NULL THEN
+    RAISE EXCEPTION 'No scheduled non-canceled game for that team in this week'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF auth.uid() IS NOT NULL THEN
+    v_is_commissioner := public.is_league_commissioner(
+      public.league_id_for_week(
+        CASE WHEN TG_OP = 'UPDATE' THEN OLD.week_id ELSE NEW.week_id END
+      )
+    );
+
+    -- Always derive game_id from team + week; ignore client-supplied values.
+    NEW.game_id := v_game.id;
+
+    IF TG_OP = 'INSERT' THEN
+      NEW.result := 'pending';
+      NEW.result_source := 'auto';
+      NEW.result_override_reason := NULL;
+      RETURN NEW;
+    END IF;
+
+    IF v_is_commissioner THEN
+      IF NEW.result IS DISTINCT FROM OLD.result
+         OR NEW.result_source IS DISTINCT FROM OLD.result_source
+         OR NEW.result_override_reason IS DISTINCT FROM OLD.result_override_reason THEN
+        IF NEW.result_source IS DISTINCT FROM 'commissioner'::public.pick_result_source THEN
+          RAISE EXCEPTION 'Commissioner result changes require result_source = commissioner'
+            USING ERRCODE = 'check_violation';
+        END IF;
+        IF NEW.result_override_reason IS NULL
+           OR btrim(NEW.result_override_reason) = '' THEN
+          RAISE EXCEPTION 'Commissioner override requires a nonblank reason'
+            USING ERRCODE = 'check_violation';
+        END IF;
+        NEW.result_source := 'commissioner';
+        NEW.result_override_reason := btrim(NEW.result_override_reason);
+      END IF;
+      RETURN NEW;
+    END IF;
+
+    -- Authenticated players cannot set or change provenance fields.
+    IF NEW.result_source IS DISTINCT FROM OLD.result_source
+       OR NEW.result_override_reason IS DISTINCT FROM OLD.result_override_reason THEN
+      RAISE EXCEPTION 'Players cannot set result_source or result_override_reason'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    NEW.result_source := OLD.result_source;
+    NEW.result_override_reason := OLD.result_override_reason;
+    RETURN NEW;
+  END IF;
+
+  -- Unauthenticated server path: require game_id match when supplied; else derive.
+  IF NEW.game_id IS NULL THEN
+    NEW.game_id := v_game.id;
+  ELSIF NEW.game_id IS DISTINCT FROM v_game.id THEN
+    RAISE EXCEPTION 'game_id must match the scheduled game for team/week'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.enforce_playoff_pick_game_and_provenance()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_game public.games%ROWTYPE;
+  v_year INTEGER;
+  v_round public.playoff_round_code;
+  v_is_commissioner BOOLEAN := false;
+BEGIN
+  IF TG_OP = 'UPDATE'
+     AND auth.uid() IS NOT NULL
+     AND NEW.playoff_round_id IS DISTINCT FROM OLD.playoff_round_id THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT s.year, pr.round_code
+  INTO v_year, v_round
+  FROM public.playoff_rounds pr
+  INNER JOIN public.seasons s ON s.id = pr.season_id
+  WHERE pr.id = NEW.playoff_round_id;
+
+  v_game := public.game_for_playoff_team(v_year, v_round, NEW.team_id);
+
+  IF v_game.id IS NULL THEN
+    RAISE EXCEPTION 'No scheduled non-canceled game for that team in this playoff round'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF auth.uid() IS NOT NULL THEN
+    v_is_commissioner := public.is_league_commissioner(
+      public.league_id_for_playoff_round(
+        CASE WHEN TG_OP = 'UPDATE' THEN OLD.playoff_round_id ELSE NEW.playoff_round_id END
+      )
+    );
+
+    NEW.game_id := v_game.id;
+
+    IF TG_OP = 'INSERT' THEN
+      NEW.result := 'pending';
+      NEW.result_source := 'auto';
+      NEW.result_override_reason := NULL;
+      NEW.points_awarded := 0;
+      RETURN NEW;
+    END IF;
+
+    IF v_is_commissioner THEN
+      IF NEW.result IS DISTINCT FROM OLD.result
+         OR NEW.points_awarded IS DISTINCT FROM OLD.points_awarded
+         OR NEW.result_source IS DISTINCT FROM OLD.result_source
+         OR NEW.result_override_reason IS DISTINCT FROM OLD.result_override_reason THEN
+        IF NEW.result_source IS DISTINCT FROM 'commissioner'::public.pick_result_source THEN
+          RAISE EXCEPTION 'Commissioner result changes require result_source = commissioner'
+            USING ERRCODE = 'check_violation';
+        END IF;
+        IF NEW.result_override_reason IS NULL
+           OR btrim(NEW.result_override_reason) = '' THEN
+          RAISE EXCEPTION 'Commissioner override requires a nonblank reason'
+            USING ERRCODE = 'check_violation';
+        END IF;
+        NEW.result_source := 'commissioner';
+        NEW.result_override_reason := btrim(NEW.result_override_reason);
+      END IF;
+      RETURN NEW;
+    END IF;
+
+    IF NEW.result_source IS DISTINCT FROM OLD.result_source
+       OR NEW.result_override_reason IS DISTINCT FROM OLD.result_override_reason THEN
+      RAISE EXCEPTION 'Players cannot set result_source or result_override_reason'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    NEW.result_source := OLD.result_source;
+    NEW.result_override_reason := OLD.result_override_reason;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.game_id IS NULL THEN
+    NEW.game_id := v_game.id;
+  ELSIF NEW.game_id IS DISTINCT FROM v_game.id THEN
+    RAISE EXCEPTION 'game_id must match the scheduled game for team/playoff round'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS picks_enforce_game_and_provenance ON public.picks;
+CREATE TRIGGER picks_enforce_game_and_provenance
+BEFORE INSERT OR UPDATE OF team_id, week_id, game_id, result, result_source, result_override_reason
+ON public.picks
+FOR EACH ROW
+EXECUTE FUNCTION public.enforce_regular_pick_game_and_provenance();
+
+DROP TRIGGER IF EXISTS playoff_picks_enforce_game_and_provenance ON public.playoff_picks;
+CREATE TRIGGER playoff_picks_enforce_game_and_provenance
+BEFORE INSERT OR UPDATE OF
+  team_id, playoff_round_id, game_id, result, points_awarded,
+  result_source, result_override_reason
+ON public.playoff_picks
+FOR EACH ROW
+EXECUTE FUNCTION public.enforce_playoff_pick_game_and_provenance();
+
+-- Strengthen Phase 1 update guards for the new provenance columns.
+CREATE OR REPLACE FUNCTION public.enforce_regular_pick_update_guards()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.user_id IS DISTINCT FROM OLD.user_id
+     OR NEW.week_id IS DISTINCT FROM OLD.week_id
+     OR NEW.submitted_at IS DISTINCT FROM OLD.submitted_at THEN
+    RAISE EXCEPTION 'Pick identity fields are immutable'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  IF public.is_league_commissioner(public.league_id_for_week(OLD.week_id)) THEN
+    IF NEW.result IS DISTINCT FROM OLD.result
+       OR NEW.result_source IS DISTINCT FROM OLD.result_source
+       OR NEW.result_override_reason IS DISTINCT FROM OLD.result_override_reason THEN
+      IF NEW.result_source IS DISTINCT FROM 'commissioner'::public.pick_result_source THEN
+        RAISE EXCEPTION 'Commissioner result changes require result_source = commissioner'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      IF NEW.result_override_reason IS NULL
+         OR btrim(NEW.result_override_reason) = '' THEN
+        RAISE EXCEPTION 'Commissioner override requires a nonblank reason'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      NEW.result_source := 'commissioner';
+      NEW.result_override_reason := btrim(NEW.result_override_reason);
+    END IF;
+    NEW.updated_at := now();
+    RETURN NEW;
+  END IF;
+
+  IF NEW.result IS DISTINCT FROM OLD.result
+     OR NEW.result_source IS DISTINCT FROM OLD.result_source
+     OR NEW.result_override_reason IS DISTINCT FROM OLD.result_override_reason THEN
+    RAISE EXCEPTION 'Players may only change team_id on picks'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.enforce_playoff_pick_update_guards()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.user_id IS DISTINCT FROM OLD.user_id
+     OR NEW.playoff_round_id IS DISTINCT FROM OLD.playoff_round_id
+     OR NEW.submitted_at IS DISTINCT FROM OLD.submitted_at THEN
+    RAISE EXCEPTION 'Pick identity fields are immutable'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  IF public.is_league_commissioner(
+    public.league_id_for_playoff_round(OLD.playoff_round_id)
+  ) THEN
+    IF NEW.result IS DISTINCT FROM OLD.result
+       OR NEW.points_awarded IS DISTINCT FROM OLD.points_awarded
+       OR NEW.result_source IS DISTINCT FROM OLD.result_source
+       OR NEW.result_override_reason IS DISTINCT FROM OLD.result_override_reason THEN
+      IF NEW.result_source IS DISTINCT FROM 'commissioner'::public.pick_result_source THEN
+        RAISE EXCEPTION 'Commissioner result changes require result_source = commissioner'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      IF NEW.result_override_reason IS NULL
+         OR btrim(NEW.result_override_reason) = '' THEN
+        RAISE EXCEPTION 'Commissioner override requires a nonblank reason'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      NEW.result_source := 'commissioner';
+      NEW.result_override_reason := btrim(NEW.result_override_reason);
+    END IF;
+    NEW.updated_at := now();
+    RETURN NEW;
+  END IF;
+
+  IF NEW.result IS DISTINCT FROM OLD.result
+     OR NEW.points_awarded IS DISTINCT FROM OLD.points_awarded
+     OR NEW.result_source IS DISTINCT FROM OLD.result_source
+     OR NEW.result_override_reason IS DISTINCT FROM OLD.result_override_reason THEN
+    RAISE EXCEPTION 'Players may only change team_id on playoff picks'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- Playoff rounds: stable codes via round_number 1..4
@@ -477,7 +902,7 @@ DECLARE
   v_round_number INTEGER;
   v_prior RECORD;
   v_pick public.playoff_picks%ROWTYPE;
-  v_has_future BOOLEAN;
+  v_round_complete BOOLEAN;
 BEGIN
   SELECT pr.season_id, pr.round_number
   INTO v_season_id, v_round_number
@@ -489,27 +914,40 @@ BEGIN
   END IF;
 
   FOR v_prior IN
-    SELECT pr.id, pr.round_code
+    SELECT pr.id, pr.round_code, pr.round_number
     FROM public.playoff_rounds pr
     WHERE pr.season_id = v_season_id
       AND pr.round_number < v_round_number
     ORDER BY pr.round_number
   LOOP
-    -- Prior round must be complete (no remaining future kickoffs) before
-    -- enforcing miss/loss elimination into later rounds.
-    SELECT EXISTS (
+    -- Prior round must be complete: every non-canceled game is final,
+    -- and no future scheduled/postponed kickoffs remain.
+    SELECT NOT EXISTS (
       SELECT 1
       FROM public.games g
       INNER JOIN public.seasons s ON s.year = g.season_year
       WHERE s.id = v_season_id
         AND g.season_type = 'postseason'
         AND g.playoff_round = v_prior.round_code
-        AND g.scheduled_kickoff_at > now()
-        AND g.status IN ('scheduled', 'postponed')
-    ) INTO v_has_future;
+        AND g.status <> 'canceled'
+        AND (
+          g.status <> 'final'
+          OR (g.scheduled_kickoff_at > now() AND g.status IN ('scheduled', 'postponed'))
+        )
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM public.games g
+      INNER JOIN public.seasons s ON s.year = g.season_year
+      WHERE s.id = v_season_id
+        AND g.season_type = 'postseason'
+        AND g.playoff_round = v_prior.round_code
+        AND g.status = 'final'
+    )
+    INTO v_round_complete;
 
-    IF v_has_future THEN
-      CONTINUE;
+    IF NOT coalesce(v_round_complete, false) THEN
+      RETURN false; -- previous round still underway or incomplete
     END IF;
 
     SELECT * INTO v_pick
@@ -521,7 +959,8 @@ BEGIN
       RETURN false; -- missed completed round
     END IF;
 
-    IF v_pick.result IN ('loss', 'tie') THEN
+    -- Only an explicit win advances. Pending/loss/tie are ineligible.
+    IF v_pick.result IS DISTINCT FROM 'win' THEN
       RETURN false;
     END IF;
   END LOOP;
@@ -541,6 +980,8 @@ TO authenticated
 WITH CHECK (
   user_id = auth.uid()
   AND result = 'pending'
+  AND result_source = 'auto'
+  AND result_override_reason IS NULL
   AND public.is_active_league_member(public.league_id_for_week(week_id))
   AND public.season_is_active_for_week(week_id)
   AND public.week_is_effective_current(week_id)
@@ -562,6 +1003,8 @@ USING (
 WITH CHECK (
   user_id = auth.uid()
   AND result = 'pending'
+  AND result_source = 'auto'
+  AND result_override_reason IS NULL
   AND public.is_active_league_member(public.league_id_for_week(week_id))
   AND public.season_is_active_for_week(week_id)
   AND public.week_is_effective_current(week_id)
@@ -577,6 +1020,8 @@ WITH CHECK (
   user_id = auth.uid()
   AND result = 'pending'
   AND points_awarded = 0
+  AND result_source = 'auto'
+  AND result_override_reason IS NULL
   AND public.is_active_league_member(
     public.league_id_for_playoff_round(playoff_round_id)
   )
@@ -629,6 +1074,8 @@ WITH CHECK (
   user_id = auth.uid()
   AND result = 'pending'
   AND points_awarded = 0
+  AND result_source = 'auto'
+  AND result_override_reason IS NULL
   AND public.is_active_league_member(
     public.league_id_for_playoff_round(playoff_round_id)
   )
@@ -740,9 +1187,17 @@ GRANT EXECUTE ON FUNCTION public.season_year_for_week(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.week_number_for_week(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.season_is_active_for_week(UUID) TO authenticated;
 
+REVOKE ALL ON FUNCTION public.sync_game_participants(public.games) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.enforce_regular_pick_game_and_provenance() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.enforce_playoff_pick_game_and_provenance() FROM PUBLIC;
+
 COMMENT ON TABLE public.games IS
   'NFL schedule/results synced from a fixed server-side provider (nflverse).';
 COMMENT ON FUNCTION public.effective_current_week_id(UUID) IS
   'Lowest regular week with a non-final/canceled game and at least one future kickoff.';
 COMMENT ON FUNCTION public.team_regular_game_is_unlocked(INTEGER, INTEGER, UUID) IS
   'True when the team has a scheduled/postponed game with scheduled_kickoff_at > now().';
+COMMENT ON FUNCTION public.player_eligible_for_playoff_round(UUID, UUID) IS
+  'True when every earlier playoff round is fully final and the player won each prior pick.';
+COMMENT ON FUNCTION public.enforce_regular_pick_game_and_provenance() IS
+  'Derives game_id and blocks authenticated players from controlling result provenance.';
