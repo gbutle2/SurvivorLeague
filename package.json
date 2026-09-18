@@ -10,6 +10,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
     "test:import": "node --experimental-strip-types --test --test-timeout=60000 \"src/lib/import/*.integration.ts\"",
+    "test:sync": "node --experimental-strip-types --test \"src/lib/nfl/*.test.ts\"",
     "test:db": "npx supabase test db",
     "import:bootstrap": "node --experimental-strip-types scripts/import-bootstrap.ts"
   },

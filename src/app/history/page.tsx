@@ -5,9 +5,10 @@ import { AppShell } from "@/components/app-shell";
 import { LeagueContextError } from "@/components/league-context-error";
 import { StatusPanel } from "@/components/status-panel";
 import { loadLeagueContext } from "@/lib/league/context";
+import { loadRegularWeekSignals } from "@/lib/nfl/schedule-query";
 import { createClient } from "@/lib/supabase/server";
 import { formatCentralDateTime, isLockedAt } from "@/lib/time/chicago";
-import { resolveCurrentWeek } from "@/lib/weeks/current-week";
+import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
 
 export const metadata: Metadata = {
@@ -45,7 +46,12 @@ export default async function HistoryPage() {
     );
   }
 
-  const current = resolveCurrentWeek(weekRows);
+  const current = resolveCurrentWeekFromGames(
+    weekRows,
+    (
+      await loadRegularWeekSignals(supabase as never, context.season.year)
+    ).signals,
+  );
   const weekIds = weekRows.map((week) => week.id);
 
   const { data: picks, error: picksError } =

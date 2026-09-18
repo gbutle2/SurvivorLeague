@@ -26,12 +26,16 @@ export function mapPickMutationError(error: DbErrorLike | null | undefined): str
 
   if (
     haystack.includes("week_is_unlocked") ||
+    haystack.includes("week_is_effective_current") ||
+    haystack.includes("pick_team_plays_unlocked") ||
+    haystack.includes("team_regular_game_is_unlocked") ||
     haystack.includes("locks_at") ||
+    haystack.includes("kickoff") ||
     haystack.includes("row-level security") ||
     haystack.includes("violates row-level security") ||
     error.code === "42501"
   ) {
-    return "This week is locked. Picks can no longer be changed.";
+    return "That game is locked (kickoff has passed) or is not selectable. Choose another team.";
   }
 
   if (

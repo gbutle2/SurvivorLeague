@@ -1,15 +1,19 @@
 import type { WeekStatus } from "@/lib/database.types";
 import type { WeekLike } from "./open-week.ts";
 
+export type GameWeekSignal = {
+  week_number: number;
+  has_non_terminal_game: boolean;
+  has_future_kickoff: boolean;
+};
+
 export type CurrentWeekResolution<T extends WeekLike> =
   | {
       kind: "actionable";
       week: T;
       picksAllowed: true;
       reason: "effective_current";
-      /** Expired upcoming/open rows skipped for eligibility (commissioner attention). */
       staleExpired: T[];
-      /** Explicit stored open rows — warning only; eligibility stays singular. */
       multipleOpenWarning: T[];
     }
   | {
@@ -20,24 +24,16 @@ export type CurrentWeekResolution<T extends WeekLike> =
       multipleOpenWarning: T[];
     };
 
-function isLockedAt(locksAt: string, now: Date): boolean {
-  return new Date(locksAt).getTime() <= now.getTime();
-}
-
-function isHistoricalStatus(status: WeekStatus): boolean {
-  return status === "locked" || status === "final";
-}
-
 /**
- * Shared server-side resolver matching database effective-current-week semantics.
+ * Shared resolver matching database effective-current-week semantics from games.
  *
- * Eligible weeks: status not locked/final, locks_at > now().
- * Actionable week: lowest week_number among eligible.
- * Stored `open` does not override an earlier eligible week.
+ * Eligible: week has ≥1 non-final/canceled game AND ≥1 future kickoff
+ * (scheduled/postponed). Lowest week_number wins.
+ * weeks.locks_at / stored open status do not authorize picks.
  */
-export function resolveCurrentWeek<T extends WeekLike>(
+export function resolveCurrentWeekFromGames<T extends WeekLike>(
   weeks: T[],
-  now: Date = new Date(),
+  signals: GameWeekSignal[],
 ): CurrentWeekResolution<T> {
   if (weeks.length === 0) {
     return {
@@ -49,22 +45,25 @@ export function resolveCurrentWeek<T extends WeekLike>(
     };
   }
 
-  const staleExpired = weeks
-    .filter(
-      (week) =>
-        !isHistoricalStatus(week.status) && isLockedAt(week.locks_at, now),
-    )
+  const byNumber = new Map(signals.map((s) => [s.week_number, s]));
+  const multipleOpenWarning = weeks
+    .filter((week) => week.status === ("open" as WeekStatus))
     .sort((a, b) => a.week_number - b.week_number);
 
-  const multipleOpenWarning = weeks
-    .filter((week) => week.status === "open")
+  const staleExpired = weeks
+    .filter((week) => {
+      const signal = byNumber.get(week.week_number);
+      return signal?.has_non_terminal_game && !signal.has_future_kickoff;
+    })
     .sort((a, b) => a.week_number - b.week_number);
 
   const eligible = weeks
-    .filter(
-      (week) =>
-        !isHistoricalStatus(week.status) && !isLockedAt(week.locks_at, now),
-    )
+    .filter((week) => {
+      const signal = byNumber.get(week.week_number);
+      return Boolean(
+        signal?.has_non_terminal_game && signal.has_future_kickoff,
+      );
+    })
     .sort((a, b) => a.week_number - b.week_number);
 
   if (eligible.length === 0) {
@@ -87,6 +86,56 @@ export function resolveCurrentWeek<T extends WeekLike>(
   };
 }
 
-export function isHistoricalWeekStatus(status: WeekStatus): boolean {
-  return isHistoricalStatus(status);
+/** @deprecated Prefer resolveCurrentWeekFromGames with schedule signals. */
+export function resolveCurrentWeek<T extends WeekLike>(
+  weeks: T[],
+  _now: Date = new Date(),
+): CurrentWeekResolution<T> {
+  // Compatibility shim: without game signals, no week is actionable.
+  void _now;
+  if (weeks.length === 0) {
+    return {
+      kind: "none",
+      picksAllowed: false,
+      reason: "no_weeks",
+      staleExpired: [],
+      multipleOpenWarning: [],
+    };
+  }
+  return {
+    kind: "none",
+    picksAllowed: false,
+    reason: "season_complete",
+    staleExpired: [],
+    multipleOpenWarning: weeks.filter((w) => w.status === "open"),
+  };
+}
+
+export type PlayoffRoundLike = {
+  id: string;
+  round_number: number;
+  round_code: string | null;
+  name: string;
+};
+
+export type GameRoundSignal = {
+  round_code: string;
+  has_non_terminal_game: boolean;
+  has_future_kickoff: boolean;
+};
+
+export function resolveCurrentPlayoffRound<T extends PlayoffRoundLike>(
+  rounds: T[],
+  signals: GameRoundSignal[],
+): T | null {
+  const byCode = new Map(signals.map((s) => [s.round_code, s]));
+  const ordered = [...rounds].sort((a, b) => a.round_number - b.round_number);
+  for (const round of ordered) {
+    if (!round.round_code) continue;
+    const signal = byCode.get(round.round_code);
+    if (signal?.has_non_terminal_game && signal.has_future_kickoff) {
+      return round;
+    }
+  }
+  return null;
 }

@@ -7,9 +7,9 @@ import {
   isCommissioner,
   loadLeagueContext,
 } from "@/lib/league/context";
+import { loadRegularWeekSignals } from "@/lib/nfl/schedule-query";
 import { createClient } from "@/lib/supabase/server";
-import { formatCentralDateTime } from "@/lib/time/chicago";
-import { resolveCurrentWeek } from "@/lib/weeks/current-week";
+import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
 
 export default async function HomePage() {
@@ -61,19 +61,20 @@ export default async function HomePage() {
   const commissioner = isCommissioner(context);
   const supabase = await createClient();
   const { weeks } = await loadSeasonWeeks(supabase, context.season.id);
-  const current = resolveCurrentWeek(weeks);
+  const { signals } = await loadRegularWeekSignals(
+    supabase as never,
+    context.season.year,
+  );
+  const current = resolveCurrentWeekFromGames(weeks, signals);
 
-  let weekSummary = "Season calendar not configured yet.";
+  let weekSummary = "NFL schedule not synced yet.";
   if (current.kind === "actionable") {
-    weekSummary = `Current week: Week ${current.week.week_number} (picks open until ${formatCentralDateTime(current.week.locks_at)}).`;
+    weekSummary = `Current NFL week: Week ${current.week.week_number} (locks at each team’s kickoff).`;
   } else if (current.kind === "none") {
     weekSummary =
       current.reason === "no_weeks"
-        ? "Season calendar not configured yet."
-        : "No eligible future week — regular season calendar may be complete.";
-  }
-  if (current.multipleOpenWarning.length > 1) {
-    weekSummary += ` Note: ${current.multipleOpenWarning.length} weeks are stored as open (eligibility still follows the earliest eligible week).`;
+        ? "NFL schedule not synced yet."
+        : "No remaining NFL week with a future kickoff.";
   }
 
   return (
@@ -92,50 +93,32 @@ export default async function HomePage() {
 
       <section className="mb-6 rounded-2xl border border-emerald-900/10 bg-emerald-950 p-4 text-emerald-50 shadow-sm">
         <p className="text-sm text-emerald-100/80">Signed in as</p>
-        <p className="mt-0.5 text-lg font-semibold tracking-tight">
+        <p className="mt-1 text-lg font-semibold">
           {context.displayName}
         </p>
-        {context.email ? (
-          <p className="mt-0.5 truncate text-sm text-emerald-100/70">
-            {context.email}
-          </p>
-        ) : null}
-        <p className="mt-3 text-sm text-emerald-50/90">
-          {context.league.name} · {context.season.year} ({context.season.status})
-        </p>
-        <p className="mt-2 text-sm text-emerald-100/90">{weekSummary}</p>
+        <p className="mt-3 text-sm text-emerald-100/90">{weekSummary}</p>
       </section>
 
-      <nav className="grid gap-3" aria-label="League sections">
+      <nav className="grid gap-3" aria-label="League navigation">
         <NavCard
-          title="Current Pick"
-          description="Submit or change this week’s survivor pick before the Central Time deadline."
+          title="Make pick"
+          description="Choose a team playing this NFL week. Locks at that team’s kickoff."
           href="/pick"
         />
         <NavCard
-          title="Standings"
-          description="Season points, streaks, and survivor status will appear here."
-          badge="Upcoming"
-        />
-        <NavCard
-          title="Team Availability"
-          description="See which NFL teams you still have available to pick."
+          title="Team availability"
+          description="See which teams you’ve already used."
           href="/availability"
         />
         <NavCard
-          title="Pick History"
-          description="Your weekly picks and results across the season."
+          title="History"
+          description="Review prior weeks and results."
           href="/history"
-        />
-        <NavCard
-          title="Rules"
-          description="Scoring, bonuses, and playoff point values for the active season."
-          badge="Upcoming"
         />
         {commissioner ? (
           <NavCard
             title="Commissioner"
-            description="Configure the season calendar, deadlines, and exceptional lock corrections."
+            description="Sync NFL schedule/results and manage exceptional overrides."
             href="/commissioner"
           />
         ) : null}

@@ -7,9 +7,13 @@ import { LeagueContextError } from "@/components/league-context-error";
 import { StatusPanel } from "@/components/status-panel";
 import { loadLeagueContext } from "@/lib/league/context";
 import { usedTeamIds } from "@/lib/picks/used-teams";
+import {
+  buildPickGameOptions,
+  loadRegularWeekSignals,
+} from "@/lib/nfl/schedule-query";
 import { createClient } from "@/lib/supabase/server";
 import { formatCentralDateTime } from "@/lib/time/chicago";
-import { resolveCurrentWeek } from "@/lib/weeks/current-week";
+import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
 
 export const metadata: Metadata = {
@@ -37,7 +41,8 @@ export default async function PickPage() {
         <StatusPanel title="Season still in setup" tone="warning">
           <p>
             The {context.season.year} season is still in setup. Ask the
-            commissioner to activate the season before picks can be submitted.
+            commissioner to activate the season after the NFL schedule is
+            synced.
           </p>
         </StatusPanel>
       </AppShell>
@@ -60,7 +65,30 @@ export default async function PickPage() {
     );
   }
 
-  const current = resolveCurrentWeek(weeks);
+  const { signals, error: signalError } = await loadRegularWeekSignals(
+    supabase as never,
+    context.season.year,
+  );
+  if (signalError) {
+    return (
+      <AppShell title="Current Pick">
+        <StatusPanel title="Schedule unavailable" tone="danger">
+          <p>Could not load NFL schedule signals.</p>
+        </StatusPanel>
+      </AppShell>
+    );
+  }
+
+  const current = resolveCurrentWeekFromGames(weeks, signals);
+
+  const { data: lastSync } = await supabase
+    .from("schedule_sync_runs")
+    .select("completed_at, status, source_freshness_at")
+    .eq("season_year", context.season.year)
+    .eq("status", "succeeded")
+    .order("completed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (current.kind === "none") {
     return (
@@ -68,23 +96,19 @@ export default async function PickPage() {
         <StatusPanel
           title={
             current.reason === "no_weeks"
-              ? "No weeks configured"
-              : "No current week"
+              ? "NFL schedule not synced"
+              : "No current NFL week"
           }
           tone="warning"
         >
           <p>
             {current.reason === "no_weeks"
-              ? "The season calendar is not ready yet. The commissioner needs to configure all regular-season weeks."
-              : "There is no eligible future week. The regular season calendar may be complete."}
+              ? "Ask the commissioner to sync the NFL schedule."
+              : "There is no remaining regular-season week with a future kickoff."}
           </p>
-          {current.staleExpired.length > 0 ? (
-            <p className="mt-2">
-              Stale expired weeks for commissioner review:{" "}
-              {current.staleExpired
-                .map((week) => `Week ${week.week_number}`)
-                .join(", ")}
-              .
+          {lastSync?.completed_at ? (
+            <p className="mt-2 text-sm">
+              Last schedule sync: {formatCentralDateTime(lastSync.completed_at)}
             </p>
           ) : null}
         </StatusPanel>
@@ -94,73 +118,101 @@ export default async function PickPage() {
 
   const week = current.week;
 
-  const [{ data: teams, error: teamsError }, { data: seasonPicks, error: picksError }] =
-    await Promise.all([
-      supabase
-        .from("teams")
-        .select("id, abbreviation, city, name, active")
-        .eq("active", true)
-        .order("abbreviation", { ascending: true }),
-      supabase
-        .from("picks")
-        .select("id, week_id, team_id")
-        .eq("user_id", context.userId)
-        .in(
-          "week_id",
-          weeks.map((item) => item.id),
-        ),
-    ]);
+  const [{ data: seasonPicks }, { data: games }] = await Promise.all([
+    supabase
+      .from("picks")
+      .select("id, week_id, team_id")
+      .eq("user_id", context.userId)
+      .in(
+        "week_id",
+        weeks.map((item) => item.id),
+      ),
+    supabase
+      .from("games")
+      .select(
+        `
+        id,
+        home_team_id,
+        away_team_id,
+        scheduled_kickoff_at,
+        status,
+        home:teams!games_home_team_id_fkey (id, abbreviation, city, name),
+        away:teams!games_away_team_id_fkey (id, abbreviation, city, name)
+      `,
+      )
+      .eq("season_year", context.season.year)
+      .eq("season_type", "regular")
+      .eq("regular_week_number", week.week_number)
+      .neq("status", "canceled"),
+  ]);
 
-  if (teamsError || picksError) {
-    return (
-      <AppShell title="Current Pick">
-        <StatusPanel title="Database unavailable" tone="danger">
-          <p>Could not load teams or your picks.</p>
-        </StatusPanel>
-      </AppShell>
-    );
-  }
+  const used = usedTeamIds(
+    (seasonPicks ?? []).map((pick) => ({
+      week_id: pick.week_id,
+      team_id: pick.team_id,
+    })),
+    { excludeWeekId: week.id },
+  );
 
-  const currentPick =
-    (seasonPicks ?? []).find((pick) => pick.week_id === week.id) ?? null;
-  const used = usedTeamIds(seasonPicks ?? [], {
-    excludeWeekId: week.id,
+  const gameRows = (games ?? []).map((game) => {
+    const home = Array.isArray(game.home) ? game.home[0] : game.home;
+    const away = Array.isArray(game.away) ? game.away[0] : game.away;
+    return {
+      id: game.id as string,
+      home_team_id: game.home_team_id as string,
+      away_team_id: game.away_team_id as string,
+      scheduled_kickoff_at: game.scheduled_kickoff_at as string,
+      status: game.status as string,
+      home: home as {
+        id: string;
+        abbreviation: string;
+        city: string;
+        name: string;
+      },
+      away: away as {
+        id: string;
+        abbreviation: string;
+        city: string;
+        name: string;
+      },
+    };
   });
 
-  const teamOptions =
-    (teams ?? []).map((team) => ({
-      id: team.id,
-      abbreviation: team.abbreviation,
-      city: team.city,
-      name: team.name,
-      used: used.has(team.id),
-    })) ?? [];
+  const options = buildPickGameOptions({
+    games: gameRows,
+    usedTeamIds: used,
+  });
+
+  const existingPick =
+    (seasonPicks ?? []).find((pick) => pick.week_id === week.id) ?? null;
+
+  const syncLabel = lastSync?.completed_at
+    ? formatCentralDateTime(lastSync.completed_at)
+    : "never";
+  const renderedAtMs = Date.parse(new Date().toISOString());
+  const staleSync =
+    Boolean(lastSync?.completed_at) &&
+    renderedAtMs - new Date(lastSync!.completed_at!).getTime() >
+      36 * 60 * 60 * 1000;
 
   return (
-    <AppShell
-      title="Current Pick"
-      subtitle={`${context.league.name} · ${context.season.year}`}
-    >
-      {current.multipleOpenWarning.length > 1 ? (
-        <div className="mb-3">
-          <StatusPanel title="Commissioner notice" tone="warning">
-            <p>
-              Multiple weeks are stored as open (
-              {current.multipleOpenWarning
-                .map((item) => `Week ${item.week_number}`)
-                .join(", ")}
-              ). Player eligibility still follows the earliest eligible week
-              (Week {week.week_number}).
-            </p>
-          </StatusPanel>
-        </div>
+    <AppShell title="Current Pick" subtitle={context.league.name}>
+      {staleSync ? (
+        <StatusPanel title="Schedule may be stale" tone="warning">
+          <p>
+            Last successful NFL sync was {syncLabel}. Scores and kickoffs may
+            lag; this is not a live scoring feed.
+          </p>
+        </StatusPanel>
       ) : null}
       <PickForm
-        teams={teamOptions}
-        initialTeamId={currentPick?.team_id ?? null}
-        weekLabel={`Week ${week.week_number}: ${week.label}`}
-        deadlineLabel={formatCentralDateTime(week.locks_at)}
-        locked={false}
+        teams={options}
+        initialTeamId={existingPick?.team_id ?? null}
+        weekLabel={week.label}
+        deadlineLabel="Locks at each team’s kickoff (Central Time)"
+        locked={options.every((option) => option.locked)}
+        lastSyncLabel={syncLabel}
+        nowMs={renderedAtMs}
       />
     </AppShell>
   );

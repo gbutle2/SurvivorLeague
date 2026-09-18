@@ -9,10 +9,11 @@ import {
   PICK_UPDATE_ZERO_ROW,
   requireMutationRow,
 } from "@/lib/mutations/result";
+import { loadRegularWeekSignals } from "@/lib/nfl/schedule-query";
 import { mapPickMutationError } from "@/lib/picks/errors";
 import { setupSeasonBlocksPicks } from "@/lib/season/activation";
 import { createClient } from "@/lib/supabase/server";
-import { resolveCurrentWeek } from "@/lib/weeks/current-week";
+import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 
 export type PickActionState = {
   error: string | null;
@@ -23,8 +24,7 @@ export type PickActionState = {
 
 /**
  * Save or change the authenticated player's pick for the effective current week.
- * Identity always comes from the session — never from submitted user_id.
- * Database RLS remains authoritative for eligibility.
+ * Identity always comes from the session. Database RLS enforces kickoff locks.
  */
 export async function savePick(
   _prev: PickActionState,
@@ -71,11 +71,19 @@ export async function savePick(
     return { ...empty, error: "Database unavailable. Could not load weeks." };
   }
 
-  const current = resolveCurrentWeek(weeks ?? []);
+  const { signals, error: signalError } = await loadRegularWeekSignals(
+    supabase as never,
+    context.season.year,
+  );
+  if (signalError) {
+    return { ...empty, error: "Could not load NFL schedule." };
+  }
+
+  const current = resolveCurrentWeekFromGames(weeks ?? [], signals);
   if (current.kind !== "actionable" || !current.picksAllowed) {
     return {
       ...empty,
-      error: "No week is available for picks right now.",
+      error: "No NFL week is available for picks right now.",
     };
   }
 
@@ -92,6 +100,23 @@ export async function savePick(
     return { ...empty, error: "That team is not available." };
   }
 
+  const { data: game } = await supabase
+    .from("games")
+    .select("id, scheduled_kickoff_at, status, home_team_id, away_team_id")
+    .eq("season_year", context.season.year)
+    .eq("season_type", "regular")
+    .eq("regular_week_number", week.week_number)
+    .neq("status", "canceled")
+    .or(`home_team_id.eq.${teamId},away_team_id.eq.${teamId}`)
+    .maybeSingle();
+
+  if (!game) {
+    return {
+      ...empty,
+      error: "That team is on bye or not scheduled this NFL week.",
+    };
+  }
+
   const teamLabel = `${team.city} ${team.name} (${team.abbreviation})`;
 
   const { data: existingPick, error: existingError } = await supabase
@@ -106,59 +131,59 @@ export async function savePick(
   }
 
   if (existingPick) {
-    if (existingPick.team_id === teamId) {
-      return {
-        error: null,
-        success: `Pick already saved: ${teamLabel}.`,
-        savedTeamId: teamId,
-        savedTeamLabel: teamLabel,
-      };
-    }
-
-    const { data, error } = await supabase
+    const { data: updated, error } = await supabase
       .from("picks")
-      .update({ team_id: teamId })
+      .update({ team_id: teamId, game_id: game.id })
       .eq("id", existingPick.id)
       .eq("user_id", userId)
-      .eq("week_id", week.id)
       .select("id, team_id")
       .maybeSingle();
 
     if (error) {
       return { ...empty, error: mapPickMutationError(error) };
     }
-    const confirmed = requireMutationRow(data, PICK_UPDATE_ZERO_ROW);
+    const confirmed = requireMutationRow(updated, PICK_UPDATE_ZERO_ROW);
     if (!confirmed.ok) {
       return { ...empty, error: confirmed.error };
     }
-  } else {
-    const { data, error } = await supabase
-      .from("picks")
-      .insert({
-        week_id: week.id,
-        user_id: userId,
-        team_id: teamId,
-      })
-      .select("id, team_id")
-      .maybeSingle();
 
-    if (error) {
-      return { ...empty, error: mapPickMutationError(error) };
-    }
-    const confirmed = requireMutationRow(data, PICK_INSERT_ZERO_ROW);
-    if (!confirmed.ok) {
-      return { ...empty, error: confirmed.error };
-    }
+    revalidatePath("/pick");
+    revalidatePath("/");
+    revalidatePath("/availability");
+    return {
+      error: null,
+      success: `Saved ${teamLabel} for ${week.label}.`,
+      savedTeamId: teamId,
+      savedTeamLabel: teamLabel,
+    };
+  }
+
+  const { data: inserted, error } = await supabase
+    .from("picks")
+    .insert({
+      week_id: week.id,
+      user_id: userId,
+      team_id: teamId,
+      game_id: game.id,
+      result: "pending",
+    })
+    .select("id, team_id")
+    .maybeSingle();
+
+  if (error) {
+    return { ...empty, error: mapPickMutationError(error) };
+  }
+  const confirmed = requireMutationRow(inserted, PICK_INSERT_ZERO_ROW);
+  if (!confirmed.ok) {
+    return { ...empty, error: confirmed.error };
   }
 
   revalidatePath("/pick");
-  revalidatePath("/availability");
-  revalidatePath("/history");
   revalidatePath("/");
-
+  revalidatePath("/availability");
   return {
     error: null,
-    success: `Saved ${teamLabel} for Week ${week.week_number}.`,
+    success: `Saved ${teamLabel} for ${week.label}.`,
     savedTeamId: teamId,
     savedTeamLabel: teamLabel,
   };

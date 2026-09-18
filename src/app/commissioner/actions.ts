@@ -79,7 +79,7 @@ export async function createWeek(
   if (!isValidRegularWeekNumber(weekNumber)) {
     return {
       ...initialHelpers,
-      error: "Week number must be an integer from 1 to 17.",
+      error: "Week number must be an integer from 1 to 18.",
     };
   }
   if (!label) {
@@ -519,8 +519,54 @@ export async function activateSeason(
   return {
     error: null,
     success:
-      "Season activated. The current week advances automatically by deadline; players can submit picks for the effective current week.",
+      "Season activated. The current NFL week is derived from the synced schedule; players pick against team kickoffs.",
   };
+}
+
+export async function syncNflScheduleAction(
+  _prev: WeekActionState,
+  _formData: FormData,
+): Promise<WeekActionState> {
+  void _formData;
+  const auth = await requireCommissionerContext();
+  if (!auth.ok) {
+    return { ...initialHelpers, error: auth.error };
+  }
+
+  try {
+    const { withSyncClient } = await import("@/lib/nfl/db");
+    const { syncNflSchedule } = await import("@/lib/nfl/sync");
+    const result = await withSyncClient((client) =>
+      syncNflSchedule(client, {
+        seasonYear: auth.context.season.year,
+        leagueSeasonId: auth.context.season.id,
+      }),
+    );
+
+    revalidateLeaguePaths();
+
+    if (result.status !== "succeeded") {
+      return {
+        ...initialHelpers,
+        error:
+          result.errorSummary ??
+          `Schedule sync ${result.status}. Check provider warnings.`,
+      };
+    }
+
+    return {
+      error: null,
+      success: `NFL schedule synced (inserted ${result.inserted}, updated ${result.updated}, rejected ${result.rejected}). Not a live scoring feed.`,
+    };
+  } catch (error) {
+    return {
+      ...initialHelpers,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Schedule sync failed.",
+    };
+  }
 }
 
 async function assertCanOpenWeek(

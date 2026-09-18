@@ -9,7 +9,7 @@ import {
 function seventeenWeeks(
   overrides?: Partial<Record<number, Partial<CalendarDeadlineInput>>>,
 ): CalendarDeadlineInput[] {
-  return Array.from({ length: 17 }, (_, index) => {
+  return Array.from({ length: 18 }, (_, index) => {
     const weekNumber = index + 1;
     const base: CalendarDeadlineInput = {
       week_number: weekNumber,
@@ -22,15 +22,15 @@ function seventeenWeeks(
 }
 
 describe("planSeasonCalendar", () => {
-  it("requires all 17 sequential weeks", () => {
+  it("requires all 18 sequential weeks", () => {
     const plan = planSeasonCalendar({
-      weekCount: 17,
+      weekCount: 18,
       inputs: seventeenWeeks().slice(0, 16),
       existing: [],
     });
     assert.equal(plan.ok, false);
     if (!plan.ok) {
-      assert.match(plan.error, /exactly 17/i);
+      assert.match(plan.error, /exactly 18/i);
     }
   });
 
@@ -38,7 +38,7 @@ describe("planSeasonCalendar", () => {
     const inputs = seventeenWeeks();
     inputs[5] = { ...inputs[5]!, week_number: 1 };
     const plan = planSeasonCalendar({
-      weekCount: 17,
+      weekCount: 18,
       inputs,
       existing: [],
     });
@@ -52,7 +52,7 @@ describe("planSeasonCalendar", () => {
     const inputs = seventeenWeeks();
     inputs[3] = { ...inputs[3]!, week_number: 99 };
     const plan = planSeasonCalendar({
-      weekCount: 17,
+      weekCount: 18,
       inputs,
       existing: [],
     });
@@ -64,7 +64,7 @@ describe("planSeasonCalendar", () => {
 
   it("rejects invalid Central Time", () => {
     const plan = planSeasonCalendar({
-      weekCount: 17,
+      weekCount: 18,
       inputs: seventeenWeeks({
         2: { lock_date: "not-a-date", lock_time: "12:00" },
       }),
@@ -79,7 +79,7 @@ describe("planSeasonCalendar", () => {
   it("retry does not duplicate weeks when identical", () => {
     const inputs = seventeenWeeks();
     const first = planSeasonCalendar({
-      weekCount: 17,
+      weekCount: 18,
       inputs,
       existing: [],
     });
@@ -87,7 +87,7 @@ describe("planSeasonCalendar", () => {
     if (!first.ok) return;
 
     const second = planSeasonCalendar({
-      weekCount: 17,
+      weekCount: 18,
       inputs,
       existing: first.weeksToInsert.map((week) => ({
         week_number: week.week_number,
@@ -99,14 +99,14 @@ describe("planSeasonCalendar", () => {
     assert.equal(second.ok, true);
     if (!second.ok) return;
     assert.equal(second.weeksToInsert.length, 0);
-    assert.equal(second.skippedExisting.length, 17);
+    assert.equal(second.skippedExisting.length, 18);
     assert.equal(second.conflicts.length, 0);
   });
 
   it("does not overwrite conflicting existing weeks", () => {
     const inputs = seventeenWeeks();
     const first = planSeasonCalendar({
-      weekCount: 17,
+      weekCount: 18,
       inputs,
       existing: [],
     });
@@ -128,7 +128,7 @@ describe("planSeasonCalendar", () => {
       1: { label: "Week 1", lock_time: "13:00" },
     });
     const plan = planSeasonCalendar({
-      weekCount: 17,
+      weekCount: 18,
       inputs: changed,
       existing,
     });
@@ -154,7 +154,7 @@ describe("planSeasonCalendar", () => {
       lock_time: "12:00",
     };
     const plan = planSeasonCalendar({
-      weekCount: 17,
+      weekCount: 18,
       inputs,
       existing: [],
     });

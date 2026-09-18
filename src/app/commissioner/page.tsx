@@ -1,12 +1,8 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
-import {
-  ActivateSeasonForm,
-  CreateWeekForm,
-  SeasonCalendarForm,
-  WeekManagerCard,
-} from "@/app/commissioner/week-manager";
+import { ActivateSeasonForm } from "@/app/commissioner/week-manager";
+import { SyncNflScheduleForm } from "@/app/commissioner/schedule-sync-form";
 import { listSeasonWeeks } from "@/app/commissioner/actions";
 import { AppShell } from "@/components/app-shell";
 import { LeagueContextError } from "@/components/league-context-error";
@@ -15,14 +11,11 @@ import {
   isCommissioner,
   loadLeagueContext,
 } from "@/lib/league/context";
+import { loadRegularWeekSignals } from "@/lib/nfl/schedule-query";
 import { activationBlockedReason } from "@/lib/season/activation";
+import { createClient } from "@/lib/supabase/server";
 import { formatCentralDateTime } from "@/lib/time/chicago";
-import { resolveCurrentWeek } from "@/lib/weeks/current-week";
-import {
-  canEditWeekDetails,
-  presentWeekState,
-} from "@/lib/weeks/lifecycle";
-import { summarizeCalendar } from "@/lib/weeks/season-weeks";
+import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 
 export const metadata: Metadata = {
   title: "Commissioner | Sunday Survivor Picks",
@@ -46,16 +39,44 @@ export default async function CommissionerPage() {
     return (
       <AppShell title="Commissioner">
         <StatusPanel title="Unauthorized" tone="danger">
-          <p>Only the league commissioner can manage weeks.</p>
+          <p>Only the league commissioner can manage the season.</p>
         </StatusPanel>
       </AppShell>
     );
   }
 
   const { context } = result;
+  const supabase = await createClient();
   const { weeks, error: weeksError } = await listSeasonWeeks(context.season.id);
-  const current = resolveCurrentWeek(weeks);
-  const calendar = summarizeCalendar(weeks, context.season.regularWeekCount);
+  const { signals } = await loadRegularWeekSignals(
+    supabase as never,
+    context.season.year,
+  );
+  const current = resolveCurrentWeekFromGames(weeks, signals);
+
+  const { data: lastSync } = await supabase
+    .from("schedule_sync_runs")
+    .select(
+      "completed_at, status, inserted_count, updated_count, rejected_count, warning_summary, source_freshness_at",
+    )
+    .eq("season_year", context.season.year)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: reviewItems } = await supabase
+    .from("schedule_review_items")
+    .select("id, kind, summary, created_at")
+    .eq("season_year", context.season.year)
+    .eq("resolved", false)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  const { count: gameCount } = await supabase
+    .from("games")
+    .select("id", { count: "exact", head: true })
+    .eq("season_year", context.season.year);
+
   const activationBlock =
     context.season.status === "setup"
       ? activationBlockedReason({
@@ -76,96 +97,103 @@ export default async function CommissionerPage() {
             Status: <strong>{context.season.status}</strong>
           </p>
           <p className="mt-1">
-            Calendar:{" "}
-            <strong>
-              {calendar.configured}/{calendar.expected} weeks configured
-            </strong>
+            Regular weeks: <strong>{weeks.length}/18</strong> (from NFL sync)
           </p>
           <p className="mt-1">
-            Timezone: <strong>Central Time (America/Chicago)</strong>
+            Synced games: <strong>{gameCount ?? 0}</strong>
+          </p>
+          <p className="mt-1">
+            Perfect season target: <strong>18-0</strong> · Playoff max:{" "}
+            <strong>24</strong> (2/4/6/12)
           </p>
           {context.scoringRules ? (
             <p className="mt-1 text-stone-600">
-              Scoring rules loaded (win {context.scoringRules.correctRegularPickPoints}{" "}
-              pt; bonuses {context.scoringRules.bestRecordBonus}/
+              Scoring: win {context.scoringRules.correctRegularPickPoints}; bonuses{" "}
+              {context.scoringRules.bestRecordBonus}/
               {context.scoringRules.longestStreakBonus}/
-              {context.scoringRules.survivorBonus}).
+              {context.scoringRules.survivorBonus}.
             </p>
           ) : (
-            <p className="mt-1 text-amber-800">
-              Scoring rules row is missing for this season.
-            </p>
+            <p className="mt-1 text-amber-800">Scoring rules missing.</p>
           )}
         </StatusPanel>
+
+        <SyncNflScheduleForm seasonYear={context.season.year} />
+
+        <StatusPanel title="Schedule freshness" tone="neutral">
+          {lastSync?.completed_at ? (
+            <>
+              <p>
+                Last run: {formatCentralDateTime(lastSync.completed_at)} (
+                {lastSync.status})
+              </p>
+              <p className="mt-1 text-sm text-stone-600">
+                Inserted {lastSync.inserted_count}, updated{" "}
+                {lastSync.updated_count}, rejected {lastSync.rejected_count}.
+              </p>
+              {lastSync.source_freshness_at ? (
+                <p className="mt-1 text-sm text-stone-600">
+                  Provider freshness:{" "}
+                  {formatCentralDateTime(lastSync.source_freshness_at)}
+                </p>
+              ) : null}
+              {lastSync.warning_summary ? (
+                <p className="mt-2 text-sm text-amber-900">
+                  Warnings: {lastSync.warning_summary}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p>No sync has been recorded yet for {context.season.year}.</p>
+          )}
+          <p className="mt-2 text-xs text-stone-500">
+            Vercel Hobby cron refreshes at most daily. Manual sync is the
+            fallback. Do not treat this as live scoring.
+          </p>
+        </StatusPanel>
+
+        {(reviewItems?.length ?? 0) > 0 ? (
+          <StatusPanel title="Schedule changes requiring review" tone="warning">
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+              {reviewItems!.map((item) => (
+                <li key={item.id}>
+                  <strong>{item.kind}</strong>: {item.summary}
+                </li>
+              ))}
+            </ul>
+          </StatusPanel>
+        ) : null}
 
         {context.season.status === "setup" ? (
           <ActivateSeasonForm
             year={context.season.year}
-            canActivate={activationBlock === null}
-            blockedReason={activationBlock}
+            canActivate={activationBlock === null && weeks.length >= 18}
+            blockedReason={
+              activationBlock ??
+              (weeks.length < 18
+                ? "Sync the NFL schedule so weeks 1–18 exist before activation."
+                : null)
+            }
           />
         ) : null}
 
-        {!calendar.complete ? (
-          <SeasonCalendarForm weekCount={context.season.regularWeekCount} />
-        ) : (
-          <StatusPanel title="Season calendar ready" tone="success">
-            <p>
-              All {calendar.expected} weeks are configured. The current week
-              advances automatically by deadline. Use exceptional controls below
-              only to edit future deadlines, lock early, or clear stale rows.
-            </p>
-          </StatusPanel>
-        )}
-
         {current.kind === "actionable" ? (
-          <StatusPanel title="Current week (automatic)" tone="success">
+          <StatusPanel title="Current NFL week (automatic)" tone="success">
             <p>
-              Week {current.week.week_number}: {current.week.label}. Picks open
-              until {formatCentralDateTime(current.week.locks_at)}. No weekly
-              “mark open” step is required.
+              {current.week.label} is current based on remaining future
+              kickoffs. Picks lock per selected team’s kickoff — not a single
+              week deadline.
             </p>
           </StatusPanel>
         ) : (
-          <StatusPanel
-            title={
-              current.reason === "no_weeks"
-                ? "No weeks yet"
-                : "No eligible current week"
-            }
-            tone="warning"
-          >
+          <StatusPanel title="No current NFL week" tone="warning">
             <p>
               {current.reason === "no_weeks"
-                ? "Configure the season calendar to continue."
-                : "No upcoming/open week with a future deadline remains."}
+                ? "Sync the NFL schedule to create weeks 1–18."
+                : "No week has a future kickoff remaining."}
             </p>
           </StatusPanel>
         )}
-
-        {current.staleExpired.length > 0 ? (
-          <StatusPanel title="Stale expired weeks" tone="warning">
-            <p>
-              These weeks are past deadline but not locked/final:{" "}
-              {current.staleExpired
-                .map((week) => `Week ${week.week_number}`)
-                .join(", ")}
-              . Lock them when ready; they are skipped for player picks.
-            </p>
-          </StatusPanel>
-        ) : null}
-
-        {current.multipleOpenWarning.length > 1 ? (
-          <StatusPanel title="Legacy open-status warning" tone="warning">
-            <p>
-              Multiple weeks are stored as open (
-              {current.multipleOpenWarning
-                .map((week) => `Week ${week.week_number}`)
-                .join(", ")}
-              ). Player eligibility still uses the earliest eligible week only.
-            </p>
-          </StatusPanel>
-        ) : null}
 
         {weeksError ? (
           <StatusPanel title="Could not load weeks" tone="danger">
@@ -173,47 +201,37 @@ export default async function CommissionerPage() {
           </StatusPanel>
         ) : null}
 
-        <section className="space-y-3" aria-label="Season weeks">
+        <section className="space-y-2" aria-label="Week summary">
           <h2 className="text-base font-semibold text-stone-900">
-            Regular-season weeks
+            Regular-season week summary
           </h2>
           {weeks.length === 0 ? (
-            <StatusPanel title="Calendar empty" tone="neutral">
-              <p>Use Configure season calendar above.</p>
-            </StatusPanel>
+            <p className="text-sm text-stone-600">No weeks yet — run Sync NFL data.</p>
           ) : (
-            weeks.map((week) => {
-              const isEffectiveCurrent =
-                current.kind === "actionable" &&
-                current.week.id === week.id;
-              const presentation = presentWeekState(
-                {
-                  status: week.status,
-                  locksAt: week.locks_at,
-                },
-                { isEffectiveCurrent },
-              );
-              const editable =
-                canEditWeekDetails({
-                  status: week.status,
-                  locksAt: week.locks_at,
-                }) === null;
-              return (
-                <WeekManagerCard
-                  key={week.id}
-                  week={{
-                    ...week,
-                    locksAtLabel: formatCentralDateTime(week.locks_at),
-                    editable,
-                    presentation,
-                  }}
-                />
-              );
-            })
+            <ul className="divide-y divide-stone-200 rounded-2xl border border-stone-200 bg-white">
+              {weeks.map((week) => {
+                const signal = signals.find((s) => s.week_number === week.week_number);
+                const isCurrent =
+                  current.kind === "actionable" && current.week.id === week.id;
+                return (
+                  <li key={week.id} className="px-3 py-3 text-sm">
+                    <p className="font-medium text-stone-900">
+                      Week {week.week_number}
+                      {isCurrent ? " · Current" : ""}
+                    </p>
+                    <p className="text-stone-600">
+                      Earliest kickoff (informational):{" "}
+                      {formatCentralDateTime(week.locks_at)}
+                      {signal
+                        ? ` · future kickoffs: ${signal.has_future_kickoff ? "yes" : "no"}`
+                        : " · no games yet"}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </section>
-
-        <CreateWeekForm />
       </div>
     </AppShell>
   );

@@ -11,6 +11,26 @@ export type PickResult = "pending" | "win" | "loss" | "tie";
 export type WeekStatus = "upcoming" | "open" | "locked" | "final";
 export type SeasonStatus = "setup" | "active" | "complete";
 export type RoundStatus = "upcoming" | "open" | "locked" | "final";
+export type NflSeasonType = "regular" | "postseason";
+export type NflGameStatus =
+  | "scheduled"
+  | "in_progress"
+  | "final"
+  | "postponed"
+  | "canceled";
+export type PlayoffRoundCode =
+  | "wildcard"
+  | "divisional"
+  | "conference"
+  | "superbowl";
+export type SyncRunStatus = "running" | "succeeded" | "failed" | "rejected";
+export type PickResultSource = "auto" | "commissioner";
+export type ScheduleReviewKind =
+  | "post_kickoff_time_change"
+  | "canceled_game"
+  | "manual_override_required"
+  | "unknown_team"
+  | "other";
 
 export type Database = {
   public: {
@@ -183,6 +203,9 @@ export type Database = {
           submitted_at: string;
           updated_at: string;
           result: PickResult;
+          result_source: PickResultSource;
+          result_override_reason: string | null;
+          game_id: string | null;
         };
         Insert: {
           id?: string;
@@ -192,6 +215,9 @@ export type Database = {
           submitted_at?: string;
           updated_at?: string;
           result?: PickResult;
+          result_source?: PickResultSource;
+          result_override_reason?: string | null;
+          game_id?: string | null;
         };
         Update: {
           id?: string;
@@ -201,6 +227,9 @@ export type Database = {
           submitted_at?: string;
           updated_at?: string;
           result?: PickResult;
+          result_source?: PickResultSource;
+          result_override_reason?: string | null;
+          game_id?: string | null;
         };
         Relationships: [];
       };
@@ -209,6 +238,7 @@ export type Database = {
           id: string;
           season_id: string;
           round_number: number;
+          round_code: PlayoffRoundCode | null;
           name: string;
           points: number;
           locks_at: string;
@@ -218,6 +248,7 @@ export type Database = {
           id?: string;
           season_id: string;
           round_number: number;
+          round_code?: PlayoffRoundCode | null;
           name: string;
           points: number;
           locks_at: string;
@@ -227,6 +258,7 @@ export type Database = {
           id?: string;
           season_id?: string;
           round_number?: number;
+          round_code?: PlayoffRoundCode | null;
           name?: string;
           points?: number;
           locks_at?: string;
@@ -244,6 +276,9 @@ export type Database = {
           updated_at: string;
           result: PickResult;
           points_awarded: number;
+          result_source: PickResultSource;
+          result_override_reason: string | null;
+          game_id: string | null;
         };
         Insert: {
           id?: string;
@@ -254,6 +289,9 @@ export type Database = {
           updated_at?: string;
           result?: PickResult;
           points_awarded?: number;
+          result_source?: PickResultSource;
+          result_override_reason?: string | null;
+          game_id?: string | null;
         };
         Update: {
           id?: string;
@@ -264,6 +302,171 @@ export type Database = {
           updated_at?: string;
           result?: PickResult;
           points_awarded?: number;
+          result_source?: PickResultSource;
+          result_override_reason?: string | null;
+          game_id?: string | null;
+        };
+        Relationships: [];
+      };
+      games: {
+        Row: {
+          id: string;
+          provider: string;
+          provider_game_id: string;
+          season_year: number;
+          season_type: NflSeasonType;
+          regular_week_number: number | null;
+          playoff_round: PlayoffRoundCode | null;
+          home_team_id: string;
+          away_team_id: string;
+          scheduled_kickoff_at: string;
+          status: NflGameStatus;
+          home_score: number | null;
+          away_score: number | null;
+          winner_team_id: string | null;
+          provider_updated_at: string | null;
+          last_synced_at: string;
+          manual_override: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          provider?: string;
+          provider_game_id: string;
+          season_year: number;
+          season_type: NflSeasonType;
+          regular_week_number?: number | null;
+          playoff_round?: PlayoffRoundCode | null;
+          home_team_id: string;
+          away_team_id: string;
+          scheduled_kickoff_at: string;
+          status?: NflGameStatus;
+          home_score?: number | null;
+          away_score?: number | null;
+          winner_team_id?: string | null;
+          provider_updated_at?: string | null;
+          last_synced_at?: string;
+          manual_override?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          provider?: string;
+          provider_game_id?: string;
+          season_year?: number;
+          season_type?: NflSeasonType;
+          regular_week_number?: number | null;
+          playoff_round?: PlayoffRoundCode | null;
+          home_team_id?: string;
+          away_team_id?: string;
+          scheduled_kickoff_at?: string;
+          status?: NflGameStatus;
+          home_score?: number | null;
+          away_score?: number | null;
+          winner_team_id?: string | null;
+          provider_updated_at?: string | null;
+          last_synced_at?: string;
+          manual_override?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      schedule_sync_runs: {
+        Row: {
+          id: string;
+          provider: string;
+          season_year: number;
+          started_at: string;
+          completed_at: string | null;
+          status: SyncRunStatus;
+          inserted_count: number;
+          updated_count: number;
+          skipped_count: number;
+          rejected_count: number;
+          source_freshness_at: string | null;
+          error_summary: string | null;
+          warning_summary: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          provider?: string;
+          season_year: number;
+          started_at?: string;
+          completed_at?: string | null;
+          status?: SyncRunStatus;
+          inserted_count?: number;
+          updated_count?: number;
+          skipped_count?: number;
+          rejected_count?: number;
+          source_freshness_at?: string | null;
+          error_summary?: string | null;
+          warning_summary?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          provider?: string;
+          season_year?: number;
+          started_at?: string;
+          completed_at?: string | null;
+          status?: SyncRunStatus;
+          inserted_count?: number;
+          updated_count?: number;
+          skipped_count?: number;
+          rejected_count?: number;
+          source_freshness_at?: string | null;
+          error_summary?: string | null;
+          warning_summary?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      schedule_review_items: {
+        Row: {
+          id: string;
+          season_year: number;
+          game_id: string | null;
+          provider_game_id: string | null;
+          kind: ScheduleReviewKind;
+          summary: string;
+          old_value: string | null;
+          new_value: string | null;
+          resolved: boolean;
+          resolved_at: string | null;
+          resolved_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          season_year: number;
+          game_id?: string | null;
+          provider_game_id?: string | null;
+          kind: ScheduleReviewKind;
+          summary: string;
+          old_value?: string | null;
+          new_value?: string | null;
+          resolved?: boolean;
+          resolved_at?: string | null;
+          resolved_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          season_year?: number;
+          game_id?: string | null;
+          provider_game_id?: string | null;
+          kind?: ScheduleReviewKind;
+          summary?: string;
+          old_value?: string | null;
+          new_value?: string | null;
+          resolved?: boolean;
+          resolved_at?: string | null;
+          resolved_by?: string | null;
+          created_at?: string;
         };
         Relationships: [];
       };

@@ -69,8 +69,8 @@ async function cleanupLeague(client: pg.Client, slug: string): Promise<void> {
   );
   if (league.rows[0]) {
     const leagueId = league.rows[0].id;
-    const seasons = await client.query<{ id: string }>(
-      `SELECT id::text AS id FROM public.seasons WHERE league_id = $1::uuid`,
+    const seasons = await client.query<{ id: string; year: number }>(
+      `SELECT id::text AS id, year FROM public.seasons WHERE league_id = $1::uuid`,
       [leagueId],
     );
     for (const season of seasons.rows) {
@@ -94,6 +94,60 @@ async function cleanupLeague(client: pg.Client, slug: string): Promise<void> {
   }
 }
 
+/** Seed schedule so effective-current-week and pick verification can succeed. */
+async function seedScheduleGames(
+  client: pg.Client,
+  year: number,
+): Promise<void> {
+  await client.query(
+    `DELETE FROM public.games
+     WHERE season_year = $1 AND provider = 'nflverse' AND provider_game_id LIKE $2`,
+    [year, `bootstrap-it-${year}-%`],
+  );
+  const teams = await client.query<{ id: string; abbreviation: string }>(
+    `SELECT id::text AS id, abbreviation FROM public.teams
+     WHERE abbreviation IN ('KC','BUF','DET','MIA','SF','PHI','DAL','GB')
+     ORDER BY abbreviation`,
+  );
+  const byAbbrev = new Map(teams.rows.map((t) => [t.abbreviation, t.id]));
+  const pairs: Array<[string, string]> = [
+    ["KC", "BUF"],
+    ["DET", "MIA"],
+    ["SF", "PHI"],
+    ["DAL", "GB"],
+  ];
+
+  for (let week = 1; week <= 18; week += 1) {
+    const [home, away] = pairs[(week - 1) % pairs.length]!;
+    const isPast = week === 1;
+    await client.query(
+      `INSERT INTO public.games (
+         provider, provider_game_id, season_year, season_type, regular_week_number,
+         home_team_id, away_team_id, scheduled_kickoff_at, status,
+         home_score, away_score, winner_team_id
+       ) VALUES (
+         'nflverse', $1, $2, 'regular', $3,
+         $4::uuid, $5::uuid, $6::timestamptz, $7::public.nfl_game_status,
+         $8, $9, $10::uuid
+       )`,
+      [
+        `bootstrap-it-${year}-w${week}`,
+        year,
+        week,
+        byAbbrev.get(home),
+        byAbbrev.get(away),
+        isPast
+          ? "2020-09-10T17:00:00.000Z"
+          : `2099-09-${String(Math.min(8 + week, 28)).padStart(2, "0")}T17:00:00.000Z`,
+        isPast ? "final" : "scheduled",
+        isPast ? 27 : null,
+        isPast ? 20 : null,
+        isPast ? byAbbrev.get(home) : null,
+      ],
+    );
+  }
+}
+
 function buildDocument(options: {
   slug: string;
   year: number;
@@ -102,7 +156,7 @@ function buildDocument(options: {
   commissionerName?: string;
   playerName?: string;
 }): BootstrapImportDocument {
-  const weeks = Array.from({ length: 17 }, (_, index) => {
+  const weeks = Array.from({ length: 18 }, (_, index) => {
     const weekNumber = index + 1;
     return {
       week_number: weekNumber,
@@ -129,7 +183,7 @@ function buildDocument(options: {
     season: {
       year: options.year,
       status: "active",
-      regular_week_count: 17,
+      regular_week_count: 18,
     },
     scoring_rules: {
       correct_regular_pick_points: 1,
@@ -197,10 +251,16 @@ describe("transactional bootstrap import (local PostgreSQL)", () => {
       email: `player-${suiteId}@example.test`,
       displayName: "Player Two",
     });
+    await seedScheduleGames(admin, year);
   });
 
   after(async () => {
     await cleanupLeague(admin, slug);
+    await admin.query(
+      `DELETE FROM public.games
+       WHERE season_year = $1 AND provider_game_id LIKE $2`,
+      [year, `bootstrap-it-${year}-%`],
+    );
     await deleteAuthUser(admin, commissionerId);
     await deleteAuthUser(admin, playerId);
     await admin.end();
@@ -264,7 +324,7 @@ describe("transactional bootstrap import (local PostgreSQL)", () => {
        WHERE l.slug = $1 AND s.year = $2`,
       [slug, year],
     );
-    assert.equal(weeks.rows[0]!.c, 17);
+    assert.equal(weeks.rows[0]!.c, 18);
 
     const open = await admin.query(
       `SELECT w.week_number
@@ -538,7 +598,7 @@ describe("transactional bootstrap import (local PostgreSQL)", () => {
        WHERE l.slug = $1 AND s.year = $2`,
       [slug, year],
     );
-    assert.equal(weeks.rows[0]!.c, 17);
+    assert.equal(weeks.rows[0]!.c, 18);
   });
 
   it("changed database state is detected when apply replans", async () => {

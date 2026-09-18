@@ -515,6 +515,29 @@ async function verifyPostWrite(
     }
   }
 
+  const gameWeeks = await queryRows<{ week_number: number }>(
+    client,
+    `SELECT DISTINCT regular_week_number AS week_number
+     FROM public.games
+     WHERE season_year = $1
+       AND season_type = 'regular'
+       AND status <> 'canceled'
+     ORDER BY 1`,
+    [document.season.year],
+  );
+  if (gameWeeks.length < 18) {
+    throw new Error(
+      `Post-write verification failed: schedule must include regular Weeks 1–18 (found ${gameWeeks.length} distinct weeks). Sync NFL schedule before activation.`,
+    );
+  }
+  for (let n = 1; n <= 18; n += 1) {
+    if (!gameWeeks.some((row) => row.week_number === n)) {
+      throw new Error(
+        `Post-write verification failed: missing NFL games for Week ${n}.`,
+      );
+    }
+  }
+
   const effective = await queryMaybeOne<{ week_number: number }>(
     client,
     `SELECT w.week_number

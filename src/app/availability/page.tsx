@@ -6,12 +6,13 @@ import { AppShell } from "@/components/app-shell";
 import { LeagueContextError } from "@/components/league-context-error";
 import { StatusPanel } from "@/components/status-panel";
 import { loadLeagueContext } from "@/lib/league/context";
+import { loadRegularWeekSignals } from "@/lib/nfl/schedule-query";
 import {
   teamAvailabilityStatus,
   usedTeamIds,
 } from "@/lib/picks/used-teams";
 import { createClient } from "@/lib/supabase/server";
-import { resolveCurrentWeek } from "@/lib/weeks/current-week";
+import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
 
 export const metadata: Metadata = {
@@ -50,7 +51,11 @@ export default async function AvailabilityPage() {
   }
 
   const weekIds = weeks.map((week) => week.id);
-  const current = resolveCurrentWeek(weeks);
+  const { signals } = await loadRegularWeekSignals(
+    supabase as never,
+    context.season.year,
+  );
+  const current = resolveCurrentWeekFromGames(weeks, signals);
   const openWeekId =
     current.kind === "actionable" ? current.week.id : null;
 

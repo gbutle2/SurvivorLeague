@@ -126,15 +126,32 @@ BEGIN
     (v_week2, v_season_a, 4, 'Week 4', now() + interval '3 days', 'upcoming'),
     (v_week_b, v_season_b, 1, 'League B Week 1', now() + interval '2 days', 'open');
 
-  INSERT INTO public.playoff_rounds (id, season_id, round_number, name, points, locks_at, status) VALUES
-    (v_round1, v_season_a, 1, 'Wild Card', 2, now() + interval '2 days', 'open'),
-    (v_round2, v_season_a, 2, 'Divisional', 4, now() + interval '5 days', 'open');
+  INSERT INTO public.playoff_rounds (id, season_id, round_number, round_code, name, points, locks_at, status) VALUES
+    (v_round1, v_season_a, 1, 'wildcard', 'Wild Card', 2, now() + interval '2 days', 'upcoming'),
+    (v_round2, v_season_a, 2, 'divisional', 'Divisional', 4, now() + interval '5 days', 'upcoming');
 
   SELECT id INTO v_team_kc FROM public.teams WHERE abbreviation = 'KC';
   SELECT id INTO v_team_buf FROM public.teams WHERE abbreviation = 'BUF';
   SELECT id INTO v_team_det FROM public.teams WHERE abbreviation = 'DET';
   SELECT id INTO v_team_phi FROM public.teams WHERE abbreviation = 'PHI';
   SELECT id INTO v_team_sf FROM public.teams WHERE abbreviation = 'SF';
+
+  -- Schedule games so kickoff RLS / effective-week helpers work.
+  INSERT INTO public.games (
+    provider, provider_game_id, season_year, season_type, regular_week_number,
+    home_team_id, away_team_id, scheduled_kickoff_at, status
+  ) VALUES
+    ('nflverse', 'p1-w1-kc-buf', 2026, 'regular', 1, v_team_kc, v_team_buf, now() + interval '2 days', 'scheduled'),
+    ('nflverse', 'p1-w1-det-sf', 2026, 'regular', 1, v_team_det, v_team_sf, now() + interval '2 days', 'scheduled'),
+    ('nflverse', 'p1-w4-kc-det', 2026, 'regular', 4, v_team_kc, v_team_det, now() + interval '10 days', 'scheduled'),
+    ('nflverse', 'p1-w4-buf-sf', 2026, 'regular', 4, v_team_buf, v_team_sf, now() + interval '10 days', 'scheduled');
+
+  INSERT INTO public.games (
+    provider, provider_game_id, season_year, season_type, playoff_round,
+    home_team_id, away_team_id, scheduled_kickoff_at, status
+  ) VALUES
+    ('nflverse', 'p1-wc', 2026, 'postseason', 'wildcard', v_team_kc, v_team_buf, now() + interval '30 days', 'scheduled'),
+    ('nflverse', 'p1-div', 2026, 'postseason', 'divisional', v_team_det, v_team_sf, now() + interval '37 days', 'scheduled');
 
   INSERT INTO public.picks (id, week_id, user_id, team_id, result)
   VALUES ('99999999-9999-9999-9999-999999999901', v_week_locked, v_player1, v_team_phi, 'pending');
@@ -260,12 +277,20 @@ SELECT throws_ok(
 );
 
 -- 7) Player cannot reuse a regular-season team
--- Make Week 1 ineligible so Week 4 becomes the effective current week, then
--- attempt reuse (player1 already used KC on Week 1). Restore Week 1 afterward.
+-- Close Week 1 schedule so Week 4 becomes effective, then attempt reuse.
 SELECT tests.clear_auth();
 UPDATE public.weeks
 SET status = 'final', locks_at = now() - interval '2 days'
 WHERE id = (SELECT week_open FROM test_ids);
+UPDATE public.games
+SET scheduled_kickoff_at = now() - interval '2 days',
+    status = 'final',
+    home_score = 21,
+    away_score = 14,
+    winner_team_id = home_team_id
+WHERE season_year = 2026
+  AND season_type = 'regular'
+  AND regular_week_number = 1;
 
 SELECT tests.authenticate_as((SELECT player1 FROM test_ids));
 SELECT throws_ok(
@@ -284,6 +309,15 @@ SELECT tests.clear_auth();
 UPDATE public.weeks
 SET status = 'open', locks_at = now() + interval '2 days'
 WHERE id = (SELECT week_open FROM test_ids);
+UPDATE public.games
+SET scheduled_kickoff_at = now() + interval '2 days',
+    status = 'scheduled',
+    home_score = NULL,
+    away_score = NULL,
+    winner_team_id = NULL
+WHERE season_year = 2026
+  AND season_type = 'regular'
+  AND regular_week_number = 1;
 
 -- 8) Regular/playoff lists separate
 SELECT tests.authenticate_as((SELECT player1 FROM test_ids));

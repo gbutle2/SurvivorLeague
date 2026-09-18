@@ -3,21 +3,16 @@
 import { useActionState, useMemo, useState } from "react";
 
 import { savePick, type PickActionState } from "@/app/pick/actions";
-
-export type PickTeamOption = {
-  id: string;
-  abbreviation: string;
-  city: string;
-  name: string;
-  used: boolean;
-};
+import type { PickGameOption } from "@/lib/nfl/schedule-query";
 
 type PickFormProps = {
-  teams: PickTeamOption[];
+  teams: PickGameOption[];
   initialTeamId: string | null;
   weekLabel: string;
   deadlineLabel: string;
   locked: boolean;
+  lastSyncLabel: string;
+  nowMs: number;
 };
 
 const initialState: PickActionState = {
@@ -27,12 +22,26 @@ const initialState: PickActionState = {
   savedTeamLabel: null,
 };
 
+function formatKickoff(iso: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(iso));
+}
+
 export function PickForm({
   teams,
   initialTeamId,
   weekLabel,
   deadlineLabel,
   locked,
+  lastSyncLabel,
+  nowMs,
 }: PickFormProps) {
   const [state, action, pending] = useActionState(savePick, initialState);
   const [query, setQuery] = useState("");
@@ -45,18 +54,21 @@ export function PickForm({
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) {
-      return teams;
-    }
+    if (!needle) return teams;
     return teams.filter((team) => {
       const haystack =
-        `${team.city} ${team.name} ${team.abbreviation}`.toLowerCase();
+        `${team.city} ${team.name} ${team.abbreviation} ${team.opponentAbbreviation}`.toLowerCase();
       return haystack.includes(needle);
     });
   }, [teams, query]);
 
   const selectedTeam =
-    teams.find((team) => team.id === effectiveSelected) ?? null;
+    teams.find((team) => team.teamId === effectiveSelected) ?? null;
+
+  const kickoffWarning =
+    selectedTeam &&
+    !selectedTeam.locked &&
+    new Date(selectedTeam.kickoffAt).getTime() - nowMs < 2 * 60 * 60 * 1000;
 
   if (locked) {
     return (
@@ -68,147 +80,130 @@ export function PickForm({
           Locked
         </p>
         <h2 className="mt-1 text-lg font-semibold text-amber-950">
-          {weekLabel} is locked
+          {weekLabel} kickoffs are complete
         </h2>
-        <p className="mt-1 text-sm text-amber-900">
-          Deadline was {deadlineLabel}. Your pick can no longer be changed.
-        </p>
+        <p className="mt-1 text-sm text-amber-900">{deadlineLabel}</p>
         {selectedTeam ? (
           <p className="mt-4 rounded-xl border border-amber-200 bg-white px-3 py-3 text-base font-semibold text-stone-900">
-            Locked selection: {selectedTeam.city} {selectedTeam.name} (
+            Selection: {selectedTeam.city} {selectedTeam.name} (
             {selectedTeam.abbreviation})
           </p>
-        ) : (
-          <p className="mt-4 text-sm font-medium text-amber-950">
-            No pick was submitted before the deadline.
-          </p>
-        )}
+        ) : null}
+        <p className="mt-3 text-xs text-amber-900">
+          Schedule sync: {lastSyncLabel}
+        </p>
       </section>
     );
   }
 
   return (
-    <form action={action} className="pb-28">
-      <div className="mb-3 rounded-2xl border border-emerald-900/10 bg-emerald-950 p-4 text-emerald-50 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-100/80">
-          Current week
+    <form action={action} className="space-y-4">
+      <header className="space-y-1">
+        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+          NFL {weekLabel}
         </p>
-        <h2 className="mt-1 text-lg font-semibold">{weekLabel}</h2>
-        <p className="mt-1 text-sm text-emerald-100/90">
-          Deadline: {deadlineLabel} (Central Time)
+        <h2 className="text-xl font-semibold text-stone-900">
+          Choose a team playing this week
+        </h2>
+        <p className="text-sm text-stone-600">{deadlineLabel}</p>
+        <p className="text-xs text-stone-500">
+          Last schedule sync: {lastSyncLabel}
         </p>
-        {selectedTeam ? (
-          <p className="mt-3 rounded-lg bg-emerald-900/50 px-3 py-2 text-sm">
-            Selected:{" "}
-            <strong>
-              {selectedTeam.city} {selectedTeam.name} ({selectedTeam.abbreviation})
-            </strong>
-          </p>
-        ) : (
-          <p className="mt-3 text-sm text-emerald-100/80">No team selected yet.</p>
-        )}
-      </div>
-
-      <label htmlFor="team-filter" className="sr-only">
-        Filter teams
-      </label>
-      <input
-        id="team-filter"
-        type="search"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Search teams"
-        className="mb-3 min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none ring-emerald-700/30 focus:border-emerald-700 focus:ring-2"
-      />
-
-      <fieldset>
-        <legend className="mb-2 text-sm font-semibold text-stone-800">
-          Choose one available team
-        </legend>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {filtered.map((team) => {
-            const selected = effectiveSelected === team.id;
-            const disabled = team.used && !selected;
-            return (
-              <label
-                key={team.id}
-                className={[
-                  "relative flex min-h-[4.5rem] cursor-pointer flex-col justify-center rounded-xl border px-3 py-3 text-left transition",
-                  selected
-                    ? "border-emerald-700 bg-emerald-50 ring-2 ring-emerald-700"
-                    : "border-stone-200 bg-white",
-                  disabled
-                    ? "cursor-not-allowed border-red-200 bg-red-50 opacity-80"
-                    : "active:border-emerald-600",
-                ].join(" ")}
-              >
-                <input
-                  type="radio"
-                  name="team_id"
-                  value={team.id}
-                  className="sr-only"
-                  disabled={disabled || pending}
-                  checked={selected}
-                  onChange={() => setSelectedTeamId(team.id)}
-                />
-                <span className="text-sm font-semibold text-stone-900">
-                  {team.abbreviation}
-                </span>
-                <span className="text-xs leading-snug text-stone-600">
-                  {team.city} {team.name}
-                </span>
-                {disabled ? (
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-red-800">
-                    <span aria-hidden>✕</span> Used
-                  </span>
-                ) : selected ? (
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-emerald-800">
-                    <span aria-hidden>✓</span> Selected
-                  </span>
-                ) : (
-                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-emerald-700">
-                    <span aria-hidden>○</span> Available
-                  </span>
-                )}
-              </label>
-            );
-          })}
-        </div>
-      </fieldset>
+      </header>
 
       {state.error ? (
         <p
+          className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900"
           role="alert"
-          className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
         >
           {state.error}
         </p>
       ) : null}
       {state.success ? (
         <p
+          className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"
           role="status"
-          className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"
         >
           {state.success}
         </p>
       ) : null}
+      {kickoffWarning ? (
+        <p
+          className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"
+          role="status"
+        >
+          Your selection kicks off soon (
+          {formatKickoff(selectedTeam!.kickoffAt)}). Saving revalidates against
+          database time — a kicked-off game will be rejected.
+        </p>
+      ) : null}
 
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-20 bg-gradient-to-t from-[#f3f6f1] via-[#f3f6f1]/95 to-transparent px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-8">
-        <div className="pointer-events-auto mx-auto flex w-full max-w-lg flex-col gap-2">
-          <p className="text-center text-xs text-stone-600">
-            {selectedTeam
-              ? `Ready to save ${selectedTeam.abbreviation}`
-              : "Select a team to save"}
-          </p>
-          <button
-            type="submit"
-            disabled={pending || !effectiveSelected}
-            className="inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-800 px-4 text-base font-semibold text-white shadow-lg transition enabled:active:bg-emerald-950 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {pending ? "Saving pick…" : "Save Pick"}
-          </button>
-        </div>
-      </div>
+      <label className="block space-y-1">
+        <span className="text-sm font-medium text-stone-800">Search teams</span>
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          className="min-h-11 w-full rounded-xl border border-stone-300 bg-white px-3 text-base text-stone-900"
+          placeholder="Team or opponent"
+        />
+      </label>
+
+      <fieldset className="space-y-2">
+        <legend className="sr-only">Teams playing this week</legend>
+        {filtered.map((team) => {
+          const disabled = team.used || team.locked;
+          const selected = effectiveSelected === team.teamId;
+          return (
+            <label
+              key={`${team.gameId}-${team.teamId}`}
+              className={`flex min-h-14 cursor-pointer items-start gap-3 rounded-2xl border px-3 py-3 ${
+                selected
+                  ? "border-emerald-600 bg-emerald-50"
+                  : "border-stone-200 bg-white"
+              } ${disabled ? "opacity-60" : ""}`}
+            >
+              <input
+                type="radio"
+                name="team_id"
+                value={team.teamId}
+                checked={selected}
+                disabled={disabled || pending}
+                onChange={() => setSelectedTeamId(team.teamId)}
+                className="mt-1 h-5 w-5"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold text-stone-900">
+                  {team.city} {team.name} ({team.abbreviation})
+                </span>
+                <span className="mt-0.5 block text-sm text-stone-600">
+                  {team.homeAway === "home" ? "vs" : "@"}{" "}
+                  {team.opponentAbbreviation} · {formatKickoff(team.kickoffAt)} ·{" "}
+                  {team.status}
+                </span>
+                <span className="mt-1 flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-wide">
+                  {team.used ? (
+                    <span className="text-stone-500">Used</span>
+                  ) : null}
+                  {team.locked ? (
+                    <span className="text-amber-800">Locked</span>
+                  ) : (
+                    <span className="text-emerald-800">Open</span>
+                  )}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </fieldset>
+
+      <button
+        type="submit"
+        disabled={pending || !effectiveSelected}
+        className="inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-800 px-4 text-base font-semibold text-white disabled:opacity-60"
+      >
+        {pending ? "Saving…" : "Save pick"}
+      </button>
     </form>
   );
 }

@@ -1,197 +1,141 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { resolveCurrentWeek } from "./current-week.ts";
-import type { WeekLike } from "./open-week.ts";
+import {
+  resolveCurrentPlayoffRound,
+  resolveCurrentWeekFromGames,
+} from "./current-week.ts";
 
-function week(
-  partial: Partial<WeekLike> & Pick<WeekLike, "id" | "week_number" | "status">,
-): WeekLike {
-  return {
-    label: `Week ${partial.week_number}`,
-    locks_at: partial.locks_at ?? "2099-01-01T18:00:00.000Z",
-    ...partial,
-  };
-}
-
-describe("resolveCurrentWeek", () => {
-  it("makes Week 2 current after Week 1 is final (no stored open required)", () => {
-    const current = resolveCurrentWeek(
-      [
-        week({
-          id: "1",
-          week_number: 1,
-          status: "final",
-          locks_at: "2026-09-01T17:00:00.000Z",
-        }),
-        week({
-          id: "2",
-          week_number: 2,
-          status: "upcoming",
-          locks_at: "2099-09-14T17:00:00.000Z",
-        }),
-        week({
-          id: "3",
-          week_number: 3,
-          status: "upcoming",
-          locks_at: "2099-09-21T17:00:00.000Z",
-        }),
-      ],
-      new Date("2026-09-10T12:00:00.000Z"),
-    );
+describe("resolveCurrentWeekFromGames", () => {
+  it("makes Week 2 current after Week 1 has no future kickoffs", () => {
+    const weeks = [
+      {
+        id: "w1",
+        week_number: 1,
+        label: "Week 1",
+        locks_at: "2026-09-01T17:00:00.000Z",
+        status: "upcoming" as const,
+      },
+      {
+        id: "w2",
+        week_number: 2,
+        label: "Week 2",
+        locks_at: "2099-09-14T17:00:00.000Z",
+        status: "upcoming" as const,
+      },
+      {
+        id: "w3",
+        week_number: 3,
+        label: "Week 3",
+        locks_at: "2099-09-21T17:00:00.000Z",
+        status: "upcoming" as const,
+      },
+    ];
+    const current = resolveCurrentWeekFromGames(weeks, [
+      { week_number: 1, has_non_terminal_game: false, has_future_kickoff: false },
+      { week_number: 2, has_non_terminal_game: true, has_future_kickoff: true },
+      { week_number: 3, has_non_terminal_game: true, has_future_kickoff: true },
+    ]);
     assert.equal(current.kind, "actionable");
     if (current.kind === "actionable") {
       assert.equal(current.week.week_number, 2);
-      assert.equal(current.picksAllowed, true);
-      assert.equal(current.reason, "effective_current");
     }
   });
 
-  it("advances Week 3 automatically after Week 2 deadline", () => {
-    const current = resolveCurrentWeek(
-      [
-        week({
-          id: "1",
-          week_number: 1,
-          status: "final",
-          locks_at: "2026-09-01T17:00:00.000Z",
-        }),
-        week({
-          id: "2",
-          week_number: 2,
-          status: "upcoming",
-          locks_at: "2026-09-08T17:00:00.000Z",
-        }),
-        week({
-          id: "3",
-          week_number: 3,
-          status: "upcoming",
-          locks_at: "2099-09-15T17:00:00.000Z",
-        }),
-      ],
-      new Date("2026-09-10T12:00:00.000Z"),
-    );
+  it("advances Week 3 automatically after Week 2 kickoffs pass", () => {
+    const weeks = [
+      {
+        id: "w2",
+        week_number: 2,
+        label: "Week 2",
+        locks_at: "2026-09-08T17:00:00.000Z",
+        status: "upcoming" as const,
+      },
+      {
+        id: "w3",
+        week_number: 3,
+        label: "Week 3",
+        locks_at: "2099-09-15T17:00:00.000Z",
+        status: "upcoming" as const,
+      },
+    ];
+    const current = resolveCurrentWeekFromGames(weeks, [
+      { week_number: 2, has_non_terminal_game: true, has_future_kickoff: false },
+      { week_number: 3, has_non_terminal_game: true, has_future_kickoff: true },
+    ]);
     assert.equal(current.kind, "actionable");
     if (current.kind === "actionable") {
       assert.equal(current.week.week_number, 3);
-      assert.equal(current.staleExpired.map((w) => w.week_number).join(","), "2");
     }
   });
 
   it("does not require a stored open status", () => {
-    const current = resolveCurrentWeek([
-      week({ id: "1", week_number: 1, status: "upcoming" }),
-    ]);
-    assert.equal(current.kind, "actionable");
-    if (current.kind === "actionable") {
-      assert.equal(current.week.status, "upcoming");
-    }
-  });
-
-  it("reports expired unresolved weeks but skips them for eligibility", () => {
-    const current = resolveCurrentWeek(
-      [
-        week({
-          id: "1",
-          week_number: 1,
-          status: "upcoming",
-          locks_at: "2026-09-01T17:00:00.000Z",
-        }),
-        week({
-          id: "2",
-          week_number: 2,
-          status: "open",
-          locks_at: "2026-09-05T17:00:00.000Z",
-        }),
-        week({
-          id: "3",
-          week_number: 3,
-          status: "upcoming",
-          locks_at: "2099-09-15T17:00:00.000Z",
-        }),
-      ],
-      new Date("2026-09-10T12:00:00.000Z"),
-    );
-    assert.equal(current.kind, "actionable");
-    if (current.kind === "actionable") {
-      assert.equal(current.week.week_number, 3);
-      assert.deepEqual(
-        current.staleExpired.map((w) => w.week_number),
-        [1, 2],
-      );
-    }
-  });
-
-  it("keeps eligibility singular when multiple stored open rows exist", () => {
-    const current = resolveCurrentWeek([
-      week({
-        id: "1",
+    const weeks = [
+      {
+        id: "w1",
         week_number: 1,
-        status: "upcoming",
+        label: "Week 1",
         locks_at: "2099-09-07T17:00:00.000Z",
-      }),
-      week({
-        id: "2",
-        week_number: 2,
-        status: "open",
-        locks_at: "2099-09-14T17:00:00.000Z",
-      }),
-      week({
-        id: "3",
-        week_number: 3,
-        status: "open",
-        locks_at: "2099-09-21T17:00:00.000Z",
-      }),
+        status: "upcoming" as const,
+      },
+    ];
+    const current = resolveCurrentWeekFromGames(weeks, [
+      { week_number: 1, has_non_terminal_game: true, has_future_kickoff: true },
     ]);
     assert.equal(current.kind, "actionable");
-    if (current.kind === "actionable") {
-      assert.equal(current.week.week_number, 1);
-      assert.equal(current.multipleOpenWarning.length, 2);
-    }
   });
 
-  it("skips locked candidates even if deadline is still future", () => {
-    const current = resolveCurrentWeek([
-      week({
-        id: "1",
-        week_number: 1,
-        status: "locked",
-        locks_at: "2099-09-07T17:00:00.000Z",
-      }),
-      week({
-        id: "2",
-        week_number: 2,
-        status: "upcoming",
-        locks_at: "2099-09-14T17:00:00.000Z",
-      }),
-    ]);
+  it("supports weeks 1 through 18", () => {
+    const weeks = Array.from({ length: 18 }, (_, i) => ({
+      id: `w${i + 1}`,
+      week_number: i + 1,
+      label: `Week ${i + 1}`,
+      locks_at: "2099-01-01T00:00:00.000Z",
+      status: "upcoming" as const,
+    }));
+    const signals = weeks.map((w) => ({
+      week_number: w.week_number,
+      has_non_terminal_game: w.week_number === 18,
+      has_future_kickoff: w.week_number === 18,
+    }));
+    const current = resolveCurrentWeekFromGames(weeks, signals);
     assert.equal(current.kind, "actionable");
     if (current.kind === "actionable") {
-      assert.equal(current.week.week_number, 2);
+      assert.equal(current.week.week_number, 18);
     }
   });
+});
 
-  it("returns season complete when no eligible future week remains", () => {
-    const current = resolveCurrentWeek(
-      [
-        week({
-          id: "1",
-          week_number: 1,
-          status: "final",
-          locks_at: "2026-09-01T17:00:00.000Z",
-        }),
-        week({
-          id: "2",
-          week_number: 2,
-          status: "upcoming",
-          locks_at: "2026-09-08T17:00:00.000Z",
-        }),
-      ],
-      new Date("2026-09-10T12:00:00.000Z"),
-    );
-    assert.equal(current.kind, "none");
-    if (current.kind === "none") {
-      assert.equal(current.reason, "season_complete");
-    }
+describe("resolveCurrentPlayoffRound", () => {
+  it("progresses wildcard → divisional → conference → superbowl", () => {
+    const rounds = [
+      { id: "r1", round_number: 1, round_code: "wildcard", name: "Wild Card" },
+      { id: "r2", round_number: 2, round_code: "divisional", name: "Divisional" },
+      { id: "r3", round_number: 3, round_code: "conference", name: "Conference" },
+      { id: "r4", round_number: 4, round_code: "superbowl", name: "Super Bowl" },
+    ];
+    const current = resolveCurrentPlayoffRound(rounds, [
+      {
+        round_code: "wildcard",
+        has_non_terminal_game: false,
+        has_future_kickoff: false,
+      },
+      {
+        round_code: "divisional",
+        has_non_terminal_game: true,
+        has_future_kickoff: true,
+      },
+      {
+        round_code: "conference",
+        has_non_terminal_game: true,
+        has_future_kickoff: true,
+      },
+      {
+        round_code: "superbowl",
+        has_non_terminal_game: true,
+        has_future_kickoff: true,
+      },
+    ]);
+    assert.equal(current?.round_code, "divisional");
   });
 });

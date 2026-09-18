@@ -33,7 +33,7 @@ export function resolveOpenWeek<T extends WeekLike>(
 }
 
 export const REGULAR_WEEK_MIN = 1;
-export const REGULAR_WEEK_MAX = 17;
+export const REGULAR_WEEK_MAX = 18;
 
 export function isValidRegularWeekNumber(weekNumber: number): boolean {
   return (

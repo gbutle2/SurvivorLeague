@@ -26,22 +26,24 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Agreed product rules
 
-- 17 regular-season weekly picks
+- 18 regular-season weekly picks
 - One NFL team per player per week
+- Selected team must play that NFL week; pick locks at that team’s kickoff
 - No regular-season team reuse
 - Eliminated players continue making weekly picks
 - Win = 1 point; loss or tie = 0
+- Missed pick is not a win, breaks streak, and eliminates from regular survivor
 - Best record = 4 bonus points
 - Longest streak = 4 bonus points
 - Regular survivor winner = 10 bonus points
 - Tied category leaders each receive the full bonus
-- One 17-0 player automatically wins overall
-- Multiple 17-0 players use the playoff survivor as the tiebreak
+- One 18-0 player automatically wins overall
+- Multiple 18-0 players use the playoff survivor as the tiebreak
 - Playoffs are a separate survivor with a fresh used-team list
-- Playoff points are 2 / 4 / 6 / 12
+- Playoff points are 2 / 4 / 6 / 12 (maximum 24)
 - Central Time
-- Other players’ picks remain hidden until the deadline
-- Undefined cases such as missed picks, cancellations, postponements, and exhausted playoff tiebreaks must not be guessed
+- Other players’ picks remain hidden until the relevant kickoff/deadline
+- Undefined cases such as cancellations, postponements, and exhausted playoff tiebreaks must not be guessed
 
 ## Environment
 

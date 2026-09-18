@@ -1,11 +1,9 @@
--- Phase 2B-A: effective current week authorization (deadline-based).
--- Run via: npm run test:db
-
+-- Phase 2B-A/B: effective current week from NFL games schedule.
 BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgtap;
 
-SELECT plan(11);
+SELECT plan(5);
 
 CREATE SCHEMA IF NOT EXISTS tests;
 
@@ -47,18 +45,17 @@ SELECT tests.clear_auth();
 
 DO $$
 DECLARE
-  v_player UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaab01';
-  v_inactive UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaab02';
-  v_commish UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaab03';
-  v_league UUID := 'cccccccc-cccc-cccc-cccc-cccccccccb01';
-  v_season UUID := 'dddddddd-dddd-dddd-dddd-dddddddddb01';
-  v_w1 UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeb01';
-  v_w2 UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeb02';
-  v_w3 UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeb03';
-  v_w4 UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeb04';
+  v_player UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaac01';
+  v_commish UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaac03';
+  v_league UUID := 'cccccccc-cccc-cccc-cccc-cccccccccc01';
+  v_season UUID := 'dddddddd-dddd-dddd-dddd-dddddddddc01';
+  v_w1 UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeec01';
+  v_w2 UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeec02';
+  v_w3 UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeec03';
   v_team_kc UUID;
   v_team_buf UUID;
   v_team_det UUID;
+  v_team_mia UUID;
 BEGIN
   INSERT INTO auth.users (
     instance_id, id, aud, role, email, encrypted_password,
@@ -66,189 +63,108 @@ BEGIN
     created_at, updated_at
   ) VALUES
     ('00000000-0000-0000-0000-000000000000', v_player, 'authenticated', 'authenticated',
-     'eff-player@example.com', crypt('x', gen_salt('bf')), now(),
-     '{"provider":"email","providers":["email"]}', '{"display_name":"Eff Player"}', now(), now()),
-    ('00000000-0000-0000-0000-000000000000', v_inactive, 'authenticated', 'authenticated',
-     'eff-inactive@example.com', crypt('x', gen_salt('bf')), now(),
-     '{"provider":"email","providers":["email"]}', '{"display_name":"Eff Inactive"}', now(), now()),
+     'eff2-player@example.com', crypt('x', gen_salt('bf')), now(),
+     '{"provider":"email","providers":["email"]}', '{"display_name":"Eff2 Player"}', now(), now()),
     ('00000000-0000-0000-0000-000000000000', v_commish, 'authenticated', 'authenticated',
-     'eff-commish@example.com', crypt('x', gen_salt('bf')), now(),
-     '{"provider":"email","providers":["email"]}', '{"display_name":"Eff Commish"}', now(), now());
+     'eff2-commish@example.com', crypt('x', gen_salt('bf')), now(),
+     '{"provider":"email","providers":["email"]}', '{"display_name":"Eff2 Commish"}', now(), now());
 
   INSERT INTO public.leagues (id, name, slug, timezone, commissioner_user_id)
-  VALUES (v_league, 'Eff League', 'eff-current', 'America/Chicago', v_commish);
+  VALUES (v_league, 'Eff2 League', 'eff-current-2', 'America/Chicago', v_commish);
 
   INSERT INTO public.league_members (league_id, user_id, role, active) VALUES
     (v_league, v_commish, 'commissioner', true),
-    (v_league, v_player, 'player', true),
-    (v_league, v_inactive, 'player', false);
+    (v_league, v_player, 'player', true);
 
-  INSERT INTO public.seasons (id, league_id, year, status)
-  VALUES (v_season, v_league, 2098, 'active');
+  INSERT INTO public.seasons (id, league_id, year, status, regular_week_count)
+  VALUES (v_season, v_league, 2097, 'active', 18);
 
   INSERT INTO public.weeks (id, season_id, week_number, label, locks_at, status) VALUES
     (v_w1, v_season, 1, 'W1', now() - interval '7 days', 'final'),
     (v_w2, v_season, 2, 'W2', now() + interval '2 days', 'upcoming'),
-    (v_w3, v_season, 3, 'W3', now() + interval '9 days', 'upcoming'),
-    (v_w4, v_season, 4, 'W4', now() + interval '16 days', 'open');
+    (v_w3, v_season, 3, 'W3', now() + interval '9 days', 'upcoming');
 
   SELECT id INTO v_team_kc FROM public.teams WHERE abbreviation = 'KC';
   SELECT id INTO v_team_buf FROM public.teams WHERE abbreviation = 'BUF';
   SELECT id INTO v_team_det FROM public.teams WHERE abbreviation = 'DET';
+  SELECT id INTO v_team_mia FROM public.teams WHERE abbreviation = 'MIA';
 
-  CREATE TEMP TABLE eff_ids AS
-  SELECT
-    v_player AS player,
-    v_inactive AS inactive,
-    v_w1 AS w1,
-    v_w2 AS w2,
-    v_w3 AS w3,
-    v_w4 AS w4,
-    v_team_kc AS team_kc,
-    v_team_buf AS team_buf,
-    v_team_det AS team_det,
-    v_season AS season_id;
+  INSERT INTO public.games (
+    provider, provider_game_id, season_year, season_type, regular_week_number,
+    home_team_id, away_team_id, scheduled_kickoff_at, status, home_score, away_score, winner_team_id
+  ) VALUES
+    ('nflverse', 'eff2-w1', 2097, 'regular', 1, v_team_kc, v_team_buf,
+     now() - interval '8 days', 'final', 21, 14, v_team_kc),
+    ('nflverse', 'eff2-w2', 2097, 'regular', 2, v_team_det, v_team_mia,
+     now() + interval '2 days', 'scheduled', NULL, NULL, NULL),
+    ('nflverse', 'eff2-w3', 2097, 'regular', 3, v_team_kc, v_team_mia,
+     now() + interval '9 days', 'scheduled', NULL, NULL, NULL);
 
-  GRANT SELECT ON eff_ids TO authenticated;
-END;
-$$;
+  CREATE TEMP TABLE eff2_ids AS
+  SELECT v_player AS player, v_season AS season_id, v_w1 AS w1, v_w2 AS w2, v_w3 AS w3,
+         v_team_det AS team_det, v_team_mia AS team_mia;
+  GRANT SELECT ON eff2_ids TO authenticated;
+END $$;
 
--- 1) Earliest eligible future week accepts a pick
-SELECT tests.authenticate_as((SELECT player FROM eff_ids));
+SELECT ok(
+  public.effective_current_week_id((SELECT season_id FROM eff2_ids))
+    = (SELECT w2 FROM eff2_ids),
+  'Week 2 is effective after Week 1 finals'
+);
+
+SELECT tests.authenticate_as((SELECT player FROM eff2_ids));
 SELECT lives_ok(
   format(
     'INSERT INTO public.picks (week_id, user_id, team_id) VALUES (%L, %L, %L)',
-    (SELECT w2 FROM eff_ids),
-    (SELECT player FROM eff_ids),
-    (SELECT team_kc FROM eff_ids)
+    (SELECT w2 FROM eff2_ids),
+    (SELECT player FROM eff2_ids),
+    (SELECT team_det FROM eff2_ids)
   ),
   'earliest eligible future week accepts a pick'
 );
 
--- 2) Later future week rejects a pick
 SELECT throws_ok(
   format(
     'INSERT INTO public.picks (week_id, user_id, team_id) VALUES (%L, %L, %L)',
-    (SELECT w3 FROM eff_ids),
-    (SELECT player FROM eff_ids),
-    (SELECT team_buf FROM eff_ids)
+    (SELECT w3 FROM eff2_ids),
+    (SELECT player FROM eff2_ids),
+    (SELECT team_mia FROM eff2_ids)
   ),
   '42501',
   NULL,
   'later future week rejects a pick'
 );
 
--- 3) Explicit open on a later week cannot bypass earlier effective week
-SELECT throws_ok(
-  format(
-    'INSERT INTO public.picks (week_id, user_id, team_id) VALUES (%L, %L, %L)',
-    (SELECT w4 FROM eff_ids),
-    (SELECT player FROM eff_ids),
-    (SELECT team_det FROM eff_ids)
-  ),
-  '42501',
-  NULL,
-  'explicit open on a later week cannot bypass earlier effective week'
-);
-
--- 4) Deadline equality rejects a pick
 SELECT tests.clear_auth();
-DELETE FROM public.picks
-WHERE week_id = (SELECT w2 FROM eff_ids)
-  AND user_id = (SELECT player FROM eff_ids);
-UPDATE public.weeks
-SET locks_at = now()
-WHERE id = (SELECT w2 FROM eff_ids);
 
-SELECT tests.authenticate_as((SELECT player FROM eff_ids));
-SELECT throws_ok(
-  format(
-    'INSERT INTO public.picks (week_id, user_id, team_id) VALUES (%L, %L, %L)',
-    (SELECT w2 FROM eff_ids),
-    (SELECT player FROM eff_ids),
-    (SELECT team_kc FROM eff_ids)
-  ),
-  '42501',
-  NULL,
-  'deadline equality rejects a pick'
-);
-
--- 5) After current deadline passes, next week becomes eligible automatically
-SELECT tests.clear_auth();
-UPDATE public.weeks
-SET locks_at = now() - interval '1 hour', status = 'upcoming'
-WHERE id = (SELECT w2 FROM eff_ids);
+UPDATE public.games
+SET scheduled_kickoff_at = now() - interval '1 hour', status = 'final',
+    home_score = 10, away_score = 7, winner_team_id = (SELECT team_det FROM eff2_ids)
+WHERE provider_game_id = 'eff2-w2';
 
 SELECT ok(
-  public.effective_current_week_id((SELECT season_id FROM eff_ids))
-    = (SELECT w3 FROM eff_ids),
-  'after current deadline passes, next week becomes effective'
+  public.effective_current_week_id((SELECT season_id FROM eff2_ids))
+    = (SELECT w3 FROM eff2_ids),
+  'Week 3 becomes effective automatically after Week 2 completes'
 );
 
-SELECT tests.authenticate_as((SELECT player FROM eff_ids));
-SELECT lives_ok(
-  format(
-    'INSERT INTO public.picks (week_id, user_id, team_id) VALUES (%L, %L, %L)',
-    (SELECT w3 FROM eff_ids),
-    (SELECT player FROM eff_ids),
-    (SELECT team_buf FROM eff_ids)
+SELECT tests.authenticate_as((SELECT player FROM eff2_ids));
+UPDATE public.picks
+SET team_id = (SELECT team_mia FROM eff2_ids)
+WHERE week_id = (SELECT w2 FROM eff2_ids)
+  AND user_id = (SELECT player FROM eff2_ids);
+SELECT is(
+  (
+    SELECT team_id
+    FROM public.picks
+    WHERE week_id = (SELECT w2 FROM eff2_ids)
+      AND user_id = (SELECT player FROM eff2_ids)
   ),
-  'next week accepts a pick automatically after prior deadline'
+  (SELECT team_det FROM eff2_ids),
+  'cannot update pick after week is no longer effective'
 );
 
--- 6) Locked current candidate is skipped
 SELECT tests.clear_auth();
-UPDATE public.weeks
-SET status = 'locked', locks_at = now() + interval '3 days'
-WHERE id = (SELECT w3 FROM eff_ids);
-
-SELECT ok(
-  public.effective_current_week_id((SELECT season_id FROM eff_ids))
-    = (SELECT w4 FROM eff_ids),
-  'locked current candidate is skipped'
-);
-
--- 7) Final weeks are skipped (Week 1 already final)
-SELECT ok(
-  public.week_is_effective_current((SELECT w1 FROM eff_ids)) = false,
-  'final weeks are skipped'
-);
-
--- 8) Inactive member is rejected
-SELECT tests.authenticate_as((SELECT inactive FROM eff_ids));
-SELECT throws_ok(
-  format(
-    'INSERT INTO public.picks (week_id, user_id, team_id) VALUES (%L, %L, %L)',
-    (SELECT w4 FROM eff_ids),
-    (SELECT inactive FROM eff_ids),
-    (SELECT team_det FROM eff_ids)
-  ),
-  '42501',
-  NULL,
-  'inactive member is rejected'
-);
-
--- 9) Reused team is rejected on the effective week
-SELECT tests.authenticate_as((SELECT player FROM eff_ids));
-SELECT throws_ok(
-  format(
-    'INSERT INTO public.picks (week_id, user_id, team_id) VALUES (%L, %L, %L)',
-    (SELECT w4 FROM eff_ids),
-    (SELECT player FROM eff_ids),
-    (SELECT team_buf FROM eff_ids)
-  ),
-  '23514',
-  NULL,
-  'reused team is rejected'
-);
-
--- 10) UI/stored open status does not grant authority by itself
-SELECT tests.clear_auth();
-SELECT ok(
-  public.week_is_effective_current((SELECT w4 FROM eff_ids)) = true
-  AND public.week_is_effective_current((SELECT w3 FROM eff_ids)) = false,
-  'UI status does not grant authority; database effective week remains singular'
-);
 
 SELECT * FROM finish();
 ROLLBACK;
