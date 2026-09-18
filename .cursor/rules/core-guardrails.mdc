@@ -10,6 +10,7 @@ alwaysApply: true
 - Ask when an undefined decision affects scoring, security, or stored data.
 - No unrelated features, services, abstractions, dependencies, or refactors.
 - No remote migrations, deployments, production-data changes, or domain changes without explicit approval.
+- Never edit an already-applied Supabase migration; use a forward-only corrective migration instead.
 - Enforce rules in server/database code, not UI-only checks.
 - Keep scoring centralized and deterministic when implemented.
 - Prefer mobile-first, accessible UI.

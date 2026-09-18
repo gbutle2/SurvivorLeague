@@ -18,6 +18,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Ask when an undefined decision affects scoring, security, or stored data.
 - Do not add unrelated features, services, abstractions, dependencies, or refactors.
 - Do not apply remote migrations, deploy, change production data, or connect custom domains without explicit approval.
+- Never edit an already-applied Supabase migration. Fix defects with a new forward-only migration. Before changing an existing migration file, compare its version with the remote migration list; local `db reset` success does not prove the production upgrade path. Production preflight must compare expected functions/triggers/policies with `pg_catalog`.
 - Enforce security in the server and database; never rely on UI-only controls.
 - Scoring must be centralized and deterministic when implemented.
 - UI must be mobile-first and accessible.
