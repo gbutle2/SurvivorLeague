@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
+    "test:import": "node --experimental-strip-types --test --test-timeout=60000 \"src/lib/import/*.integration.ts\"",
     "test:db": "npx supabase test db",
     "import:bootstrap": "node --experimental-strip-types scripts/import-bootstrap.ts"
   },
@@ -16,12 +17,14 @@
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.116.0",
     "next": "16.3.5",
+    "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

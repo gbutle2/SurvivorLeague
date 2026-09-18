@@ -122,8 +122,34 @@ function bump(
   else counts.skipped += 1;
 }
 
-function memberIdentity(member: BootstrapMemberInput): string {
-  return member.auth_user_id ?? `email:${member.email}`;
+function validateDocumentInvariants(
+  document: BootstrapImportDocument,
+): string | null {
+  const openWeeks = document.weeks.filter((week) => week.status === "open");
+  if (openWeeks.length !== 1) {
+    return `Document must contain exactly one open week (found ${openWeeks.length}).`;
+  }
+
+  const week1 = document.weeks.find((week) => week.week_number === 1);
+  if (!week1) {
+    return "Document must include week 1.";
+  }
+  if (week1.status !== "locked" && week1.status !== "final") {
+    return "Week 1 status must be locked or final.";
+  }
+
+  const usedByUser = new Map<string, Set<string>>();
+  for (const pick of document.picks) {
+    const identity = pick.auth_user_id ?? `email:${pick.email?.toLowerCase()}`;
+    const used = usedByUser.get(identity) ?? new Set<string>();
+    if (used.has(pick.team_abbreviation)) {
+      return `Document reuses team ${pick.team_abbreviation} for the same player across weeks.`;
+    }
+    used.add(pick.team_abbreviation);
+    usedByUser.set(identity, used);
+  }
+
+  return null;
 }
 
 function resolveMemberUserId(
@@ -138,7 +164,8 @@ function resolveMemberUserId(
     if (!found) {
       return {
         ok: false,
-        error: `No Auth user found for email ${member.email}. Supply auth_user_id from Supabase Auth.`,
+        error:
+          "No Auth user found for member email lookup. Supply auth_user_id from Supabase Auth.",
       };
     }
     return { ok: true, userId: found };
@@ -149,6 +176,8 @@ function resolveMemberUserId(
 /**
  * Plan bootstrap mutations without writing.
  * When allowOverwrite is false, any conflicting existing row blocks the plan.
+ * allowOverwrite never bypasses identity, commissioner, week-sequence,
+ * one-open-week, team-reuse, or structural validations.
  */
 export function planBootstrapImport(options: {
   document: BootstrapImportDocument;
@@ -160,6 +189,11 @@ export function planBootstrapImport(options: {
   const counts = emptyCounts();
   const mutations: PlannedMutation[] = [];
   const conflicts: ImportConflict[] = [];
+
+  const invariantError = validateDocumentInvariants(document);
+  if (invariantError) {
+    return { ok: false, error: invariantError, conflicts };
+  }
 
   const resolvedMembers: Array<{
     userId: string;
@@ -181,7 +215,7 @@ export function planBootstrapImport(options: {
     });
 
     const profile = existing.profilesById.get(resolved.userId);
-    const profileKey = memberIdentity(member);
+    const profileKey = resolved.userId;
     if (!profile) {
       mutations.push({
         entity: "profile",
@@ -194,7 +228,7 @@ export function planBootstrapImport(options: {
         conflicts.push({
           entity: "profile",
           key: profileKey,
-          message: `Profile ${resolved.userId} display_name differs (not overwritten).`,
+          message: `Profile ${resolved.userId} (${member.display_name}) display_name differs (not overwritten).`,
         });
       } else {
         mutations.push({
@@ -438,34 +472,27 @@ export function planBootstrapImport(options: {
       .filter((member) => member.email)
       .map((member) => [member.email!.toLowerCase(), member]),
   );
-  const memberByAuth = new Map(
-    document.members
-      .filter((member) => member.auth_user_id)
-      .map((member) => [member.auth_user_id!, member]),
-  );
 
   for (const pick of document.picks) {
     let userId: string | undefined;
     if (pick.auth_user_id) {
-      userId = pick.auth_user_id;
-      if (!memberByAuth.has(pick.auth_user_id)) {
-        const resolved = resolvedMembers.find(
-          (member) => member.userId === pick.auth_user_id,
-        );
-        if (!resolved) {
-          return {
-            ok: false,
-            error: `Pick for week ${pick.week_number} references unknown auth_user_id.`,
-            conflicts,
-          };
-        }
+      const resolved = resolvedMembers.find(
+        (member) => member.userId === pick.auth_user_id,
+      );
+      if (!resolved) {
+        return {
+          ok: false,
+          error: `Pick for week ${pick.week_number} references unknown auth_user_id.`,
+          conflicts,
+        };
       }
+      userId = pick.auth_user_id;
     } else if (pick.email) {
       const member = memberByEmail.get(pick.email.toLowerCase());
       if (!member) {
         return {
           ok: false,
-          error: `Pick for week ${pick.week_number} email ${pick.email} is not in members[].`,
+          error: `Pick for week ${pick.week_number} references a member email not present in members[].`,
           conflicts,
         };
       }
@@ -580,4 +607,17 @@ export function emptyExistingSnapshot(): ExistingBootstrapSnapshot {
       ["DET", "team-det"],
     ]),
   };
+}
+
+export function formatPlanReport(
+  plan: Extract<BootstrapPlan, { ok: true }>,
+): string {
+  const lines = [
+    `counts: inserted=${plan.counts.inserted} updated=${plan.counts.updated} skipped=${plan.counts.skipped} conflicts=${plan.counts.conflicts}`,
+    "mutations:",
+  ];
+  for (const mutation of plan.mutations) {
+    lines.push(`  - ${mutation.action} ${mutation.entity} ${mutation.key}`);
+  }
+  return lines.join("\n");
 }
