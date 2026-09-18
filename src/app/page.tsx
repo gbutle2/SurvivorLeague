@@ -5,7 +5,10 @@ import { LeagueContextError } from "@/components/league-context-error";
 import { LogoutButton } from "@/components/logout-button";
 import { NavCard } from "@/components/nav-card";
 import { StatusPanel } from "@/components/status-panel";
-import { buildRegularStandings } from "@/lib/dashboard/standings";
+import {
+  buildRegularStandings,
+  resolveStandingsWeekStatus,
+} from "@/lib/dashboard/standings";
 import { isCommissioner, loadLeagueContext } from "@/lib/league/context";
 import { loadRegularWeekSignals } from "@/lib/nfl/schedule-query";
 import { createClient } from "@/lib/supabase/server";
@@ -47,7 +50,10 @@ export default async function HomePage() {
       ? supabase.from("picks").select("user_id, week_id, team_id, result").in("week_id", weekIds)
       : Promise.resolve({ data: [], error: null }),
     playoffRoundIds.length
-      ? supabase.from("playoff_picks").select("user_id, points_awarded").in("playoff_round_id", playoffRoundIds)
+      ? supabase
+          .from("playoff_picks")
+          .select("user_id, points_awarded, result")
+          .in("playoff_round_id", playoffRoundIds)
       : Promise.resolve({ data: [], error: null }),
   ]);
 
@@ -60,8 +66,17 @@ export default async function HomePage() {
     ? scoring.wildcardPoints + scoring.divisionalPoints + scoring.conferencePoints + scoring.superbowlPoints
     : 0;
   const playoffPoints = new Map<string, number>();
+  const playoffAlive = new Map<string, boolean>();
   for (const pick of playoffPicksResult.data ?? []) {
-    playoffPoints.set(pick.user_id, (playoffPoints.get(pick.user_id) ?? 0) + pick.points_awarded);
+    playoffPoints.set(
+      pick.user_id,
+      (playoffPoints.get(pick.user_id) ?? 0) + pick.points_awarded,
+    );
+    if (pick.result === "loss" || pick.result === "tie") {
+      playoffAlive.set(pick.user_id, false);
+    } else if (!playoffAlive.has(pick.user_id)) {
+      playoffAlive.set(pick.user_id, true);
+    }
   }
 
   const players = (profilesResult.data ?? []).map((profile) => ({
@@ -78,13 +93,14 @@ export default async function HomePage() {
       return {
         id: week.id,
         weekNumber: week.week_number,
-        status:
-          signal && !signal.has_non_terminal_game
-            ? ("final" as const)
-            : week.status,
+        status: resolveStandingsWeekStatus(week.status, signal),
       };
     }),
-    (picksResult.data ?? []).map((pick) => ({ userId: pick.user_id, weekId: pick.week_id, result: pick.result })),
+    (picksResult.data ?? []).map((pick) => ({
+      userId: pick.user_id,
+      weekId: pick.week_id,
+      result: pick.result,
+    })),
     {
       regularPickPoints: scoring?.correctRegularPickPoints ?? 0,
       bestRecordBonus: scoring?.bestRecordBonus ?? 0,
@@ -93,6 +109,7 @@ export default async function HomePage() {
       playoffMaximum,
     },
     playoffPoints,
+    playoffAlive,
   );
 
   const current = resolveCurrentWeekFromGames(weeks, signalsResult.signals);
@@ -106,7 +123,12 @@ export default async function HomePage() {
     : { data: [], error: null };
   const teamById = new Map((currentTeams ?? []).map((team) => [team.id, team.abbreviation]));
   const currentPickByUser = new Map(currentPicks.map((pick) => [pick.user_id, pick]));
-  const weekFinished = currentWeek?.status === "final";
+  const currentSignal = currentWeek
+    ? signalByWeek.get(currentWeek.week_number)
+    : undefined;
+  const weekFinished = currentWeek
+    ? resolveStandingsWeekStatus(currentWeek.status, currentSignal) === "final"
+    : false;
   const weeklyPicks = currentWeek
     ? players.map((player) => {
         const pick = currentPickByUser.get(player.userId);
@@ -114,6 +136,8 @@ export default async function HomePage() {
           userId: player.userId,
           displayName: player.displayName,
           team: pick ? (teamById.get(pick.team_id) ?? "Team") : null,
+          // Absence of another player's row may mean "hidden by kickoff RLS" or
+          // "no pick"; never label that as missing before the week is complete.
           state: pick
             ? ("visible" as const)
             : player.userId === context.userId || weekFinished
