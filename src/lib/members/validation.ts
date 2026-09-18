@@ -1,5 +1,3 @@
-export const MAX_ACTIVE_LEAGUE_MEMBERS = 6;
-
 export const DISPLAY_NAME_MIN = 1;
 export const DISPLAY_NAME_MAX = 40;
 
@@ -12,7 +10,6 @@ export type MemberErrorCode =
   | "password_mismatch"
   | "duplicate_email"
   | "duplicate_membership"
-  | "member_limit"
   | "not_found"
   | "conflict"
   | "setup_failed"

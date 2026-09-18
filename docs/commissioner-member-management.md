@@ -37,11 +37,10 @@ Players cannot clear the flag with the browser Supabase client (`app_metadata` i
 - Accounts are **not** deleted from this UI.
 - Inactive members are denied league access by existing RLS (`is_active_league_member`).
 - Commissioners cannot deactivate themselves or other commissioners here.
-- Reactivation enforces the six-active-member limit and does not reset passwords.
+- Reactivation does not reset passwords.
 
 ## Limits and conflicts
 
-- Maximum **6** active league members (including the commissioner).
 - Duplicate Auth emails return a safe conflict (no silent attach of a pre-existing user).
 - Role is always `player` for created accounts; no self-promotion via this UI.
 

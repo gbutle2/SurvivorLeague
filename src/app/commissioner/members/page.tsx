@@ -6,7 +6,6 @@ import { loadMembersForPage } from "@/app/commissioner/members/actions";
 import { AppShell } from "@/components/app-shell";
 import { LeagueContextError } from "@/components/league-context-error";
 import { StatusPanel } from "@/components/status-panel";
-import { MAX_ACTIVE_LEAGUE_MEMBERS } from "@/lib/members/validation";
 import {
   isCommissioner,
   loadLeagueContext,
@@ -64,14 +63,13 @@ export default async function CommissionerMembersPage() {
   return (
     <AppShell
       title="Members"
-      subtitle={`${result.context.league.name} · ${activeCount}/${MAX_ACTIVE_LEAGUE_MEMBERS} active`}
+      subtitle={`${result.context.league.name} · ${activeCount} active`}
       backHref="/commissioner"
       backLabel="Commissioner"
     >
       <MembersManager
         members={members}
         activeCount={activeCount}
-        maxActive={MAX_ACTIVE_LEAGUE_MEMBERS}
       />
     </AppShell>
   );

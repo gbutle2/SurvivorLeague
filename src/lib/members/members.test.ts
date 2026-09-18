@@ -7,7 +7,6 @@ import {
   TEMP_PASSWORD_MIN_LENGTH,
 } from "./temp-password.ts";
 import {
-  MAX_ACTIVE_LEAGUE_MEMBERS,
   MemberManagementError,
   mapMemberErrorForUi,
   mustChangePasswordFromMetadata,
@@ -19,7 +18,6 @@ import {
 import {
   assertDeactivateAllowed,
   assertPlayerPasswordResetAllowed,
-  assertReactivateCapacity,
   resolveForcedPasswordRedirect,
   shouldDeleteAuthUserOnCompensation,
 } from "./policy.ts";
@@ -139,24 +137,6 @@ describe("member policy authorization", () => {
       target: { userId: "player-1", role: "player", active: true },
     });
     assert.equal(target.userId, "player-1");
-  });
-
-  it("enforces six-active-member reactivation limit", () => {
-    assert.throws(
-      () =>
-        assertReactivateCapacity({
-          currentlyActive: false,
-          activeCount: MAX_ACTIVE_LEAGUE_MEMBERS,
-        }),
-      (error: unknown) =>
-        error instanceof MemberManagementError && error.code === "member_limit",
-    );
-    assert.doesNotThrow(() =>
-      assertReactivateCapacity({
-        currentlyActive: false,
-        activeCount: MAX_ACTIVE_LEAGUE_MEMBERS - 1,
-      }),
-    );
   });
 
   it("compensation deletes only brand-new Auth users", () => {
@@ -289,6 +269,6 @@ describe("create-player authorization contract", () => {
     void submitted.leagueId;
     void submitted.userId;
     void submitted.role;
-    assert.equal(MAX_ACTIVE_LEAGUE_MEMBERS, 6);
+    assert.equal(submitted.role, "commissioner");
   });
 });
