@@ -66,42 +66,9 @@ export function assertDeactivateAllowed(input: {
   return input.target;
 }
 
-/**
- * Leagues have no fixed active-member capacity.
- * Used by tests to document that create/reactivate is not blocked by count.
- */
-export function canAddOrReactivateActiveMember(activeCount: number): boolean {
-  void activeCount;
-  return true;
-}
-
 export function shouldDeleteAuthUserOnCompensation(input: {
   newlyCreatedInThisRequest: boolean;
   preExistingUser: boolean;
 }): boolean {
   return input.newlyCreatedInThisRequest && !input.preExistingUser;
-}
-
-export function resolveForcedPasswordRedirect(input: {
-  authenticated: boolean;
-  mustChangePassword: boolean;
-  pathname: string;
-}): string | null {
-  const path = input.pathname;
-  const isLogin = path.startsWith("/login");
-  const isChange = path.startsWith("/change-password");
-
-  if (!input.authenticated && !isLogin) {
-    return "/login";
-  }
-  if (input.authenticated && input.mustChangePassword && !isChange) {
-    return "/change-password";
-  }
-  if (input.authenticated && !input.mustChangePassword && isChange) {
-    return "/";
-  }
-  if (input.authenticated && isLogin) {
-    return input.mustChangePassword ? "/change-password" : "/";
-  }
-  return null;
 }

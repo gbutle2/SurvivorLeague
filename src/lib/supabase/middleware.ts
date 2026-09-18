@@ -3,16 +3,39 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import type { Database } from "@/lib/database.types";
 import { mustChangePasswordFromMetadata } from "@/lib/members/validation";
-import { resolveForcedPasswordRedirect } from "@/lib/members/policy";
+import {
+  copySessionCookiesOnto,
+  isCronNflSyncPath,
+  isLoginPath,
+  resolveForcedPasswordRedirect,
+} from "@/lib/supabase/auth-routing";
 
-function redirectTo(request: NextRequest, pathname: string) {
+/** Copy cookies Supabase attached to the session response onto a redirect. */
+export function redirectWithSessionCookies(
+  request: NextRequest,
+  pathname: string,
+  supabaseResponse: NextResponse,
+): NextResponse {
   const url = request.nextUrl.clone();
   url.pathname = pathname;
   url.search = "";
-  return NextResponse.redirect(url);
+  const redirectResponse = NextResponse.redirect(url);
+  copySessionCookiesOnto(supabaseResponse.cookies, {
+    set: (name, value) => {
+      redirectResponse.cookies.set(name, value);
+    },
+  });
+  return redirectResponse;
 }
 
 export async function updateSession(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  // Vercel cron uses bearer auth on the route — do not require a user cookie.
+  if (isCronNflSyncPath(pathname)) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   });
@@ -21,12 +44,9 @@ export async function updateSession(request: NextRequest) {
   const supabasePublishableKey =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
-  const pathname = request.nextUrl.pathname;
-  const isLoginRoute = pathname.startsWith("/login");
-
   if (!supabaseUrl || !supabasePublishableKey) {
-    if (!isLoginRoute) {
-      return redirectTo(request, "/login");
+    if (!isLoginPath(pathname)) {
+      return redirectWithSessionCookies(request, "/login", supabaseResponse);
     }
     return supabaseResponse;
   }
@@ -65,7 +85,7 @@ export async function updateSession(request: NextRequest) {
   });
 
   if (destination) {
-    return redirectTo(request, destination);
+    return redirectWithSessionCookies(request, destination, supabaseResponse);
   }
 
   return supabaseResponse;

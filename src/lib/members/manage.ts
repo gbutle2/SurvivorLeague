@@ -16,6 +16,12 @@ import {
   validateEmail,
 } from "@/lib/members/validation";
 import {
+  addExclusivePlayerMembership,
+  applyPlayerActiveUpdate,
+  compensateFailedPlayerSetup,
+  type CompensationAdmin,
+} from "@/lib/members/membership-mutations";
+import {
   assertDeactivateAllowed,
   assertPlayerPasswordResetAllowed,
 } from "@/lib/members/policy";
@@ -232,20 +238,6 @@ export async function createPlayerAccount(input: {
     newlyCreatedAuthUser = true;
     const userId = createdUser.id;
 
-    const { data: existingMembership } = await supabase
-      .from("league_members")
-      .select("user_id, active")
-      .eq("league_id", context.league.id)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (existingMembership) {
-      throw new MemberManagementError(
-        "duplicate_membership",
-        "That user is already a member of this league.",
-      );
-    }
-
     // Profile is created by on_auth_user_created; ensure display name.
     const { error: profileError } = await admin.from("profiles").upsert(
       { id: userId, display_name: displayName },
@@ -259,26 +251,29 @@ export async function createPlayerAccount(input: {
       );
     }
 
-    const { error: memberError } = await supabase.from("league_members").insert({
-      league_id: context.league.id,
-      user_id: userId,
-      role: "player",
-      active: true,
+    // No active-member count query or capacity gate — membership insert only.
+    await addExclusivePlayerMembership({
+      leagueId: context.league.id,
+      userId,
+      findExistingMembership: async ({ leagueId, userId: memberUserId }) => {
+        const { data } = await supabase
+          .from("league_members")
+          .select("user_id")
+          .eq("league_id", leagueId)
+          .eq("user_id", memberUserId)
+          .maybeSingle();
+        return data;
+      },
+      insertMembership: async ({ leagueId, userId: memberUserId }) => {
+        const { error } = await supabase.from("league_members").insert({
+          league_id: leagueId,
+          user_id: memberUserId,
+          role: "player",
+          active: true,
+        });
+        return { error };
+      },
     });
-
-    if (memberError) {
-      if (/unique|duplicate/i.test(memberError.message)) {
-        throw new MemberManagementError(
-          "duplicate_membership",
-          "That user is already a member of this league.",
-        );
-      }
-      logMemberError("create_player", "MEMBERSHIP_INSERT_FAILED");
-      throw new MemberManagementError(
-        "setup_failed",
-        "Could not add the player to the league.",
-      );
-    }
 
     const { data: verifiedProfile } = await admin
       .from("profiles")
@@ -315,7 +310,7 @@ export async function createPlayerAccount(input: {
     };
   } catch (error) {
     if (newlyCreatedAuthUser && createdUser) {
-      await compensateFailedPlayerSetup(admin, {
+      await compensateFailedPlayerSetup(admin as unknown as CompensationAdmin, {
         leagueId: context.league.id,
         userId: createdUser.id,
         deleteAuthUser: true,
@@ -330,44 +325,6 @@ export async function createPlayerAccount(input: {
       "Could not create the player account.",
     );
   }
-}
-
-async function compensateFailedPlayerSetup(
-  admin: AdminClient,
-  options: { leagueId: string; userId: string; deleteAuthUser: boolean },
-): Promise<void> {
-  try {
-    await admin
-      .from("league_members")
-      .delete()
-      .eq("league_id", options.leagueId)
-      .eq("user_id", options.userId);
-  } catch {
-    logMemberError("compensation", "MEMBERSHIP_CLEANUP_FAILED");
-  }
-
-  if (!options.deleteAuthUser) {
-    return;
-  }
-
-  // Only delete Auth users we just created in this request — never a pre-existing user.
-  const { error } = await admin.auth.admin.deleteUser(options.userId);
-  if (error) {
-    logMemberError("compensation", "AUTH_DELETE_FAILED");
-  }
-}
-
-/**
- * Testable compensation: deletes Auth user only when `deleteAuthUser` is true
- * (brand-new user in this flow). Pre-existing users must pass false.
- */
-export async function runCreatePlayerCompensationForTests(
-  admin: Pick<AdminClient, "from"> & {
-    auth: { admin: { deleteUser: AdminClient["auth"]["admin"]["deleteUser"] } };
-  },
-  options: { leagueId: string; userId: string; deleteAuthUser: boolean },
-): Promise<void> {
-  await compensateFailedPlayerSetup(admin as AdminClient, options);
 }
 
 export async function resetPlayerTemporaryPassword(input: {
@@ -493,20 +450,10 @@ export async function setMemberActive(input: {
     return;
   }
 
-  const { error: updateError } = await supabase
-    .from("league_members")
-    .update({ active: input.active })
-    .eq("league_id", context.league.id)
-    .eq("user_id", targetUserId)
-    .eq("role", "player");
-
-  if (updateError) {
-    logMemberError("set_active", "MEMBERSHIP_UPDATE_FAILED");
-    throw new MemberManagementError(
-      "unexpected",
-      input.active
-        ? "Could not reactivate the player."
-        : "Could not deactivate the player.",
-    );
-  }
+  await applyPlayerActiveUpdate({
+    supabase: supabase as never,
+    leagueId: context.league.id,
+    targetUserId,
+    active: input.active,
+  });
 }

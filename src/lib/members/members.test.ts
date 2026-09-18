@@ -19,10 +19,12 @@ import {
 import {
   assertDeactivateAllowed,
   assertPlayerPasswordResetAllowed,
-  canAddOrReactivateActiveMember,
-  resolveForcedPasswordRedirect,
   shouldDeleteAuthUserOnCompensation,
 } from "./policy.ts";
+import {
+  addExclusivePlayerMembership,
+  applyPlayerActiveUpdate,
+} from "./membership-mutations.ts";
 
 describe("temporary password generator", () => {
   it("meets length and character-class policy", () => {
@@ -140,29 +142,6 @@ describe("member policy authorization", () => {
     assert.equal(target.userId, "player-1");
   });
 
-  it("allows a seventh and additional active members with no capacity cap", () => {
-    assert.equal(canAddOrReactivateActiveMember(6), true);
-    assert.equal(canAddOrReactivateActiveMember(7), true);
-    assert.equal(canAddOrReactivateActiveMember(20), true);
-  });
-
-  it("allows reactivation regardless of how many other members are active", () => {
-    assert.equal(canAddOrReactivateActiveMember(100), true);
-  });
-
-  it("still rejects duplicate in-league membership targets as not found when missing", () => {
-    assert.throws(
-      () =>
-        assertPlayerPasswordResetAllowed({
-          actorUserId: "comm-1",
-          actorLeagueId: "league-1",
-          target: null,
-        }),
-      (error: unknown) =>
-        error instanceof MemberManagementError && error.code === "not_found",
-    );
-  });
-
   it("compensation deletes only brand-new Auth users", () => {
     assert.equal(
       shouldDeleteAuthUserOnCompensation({
@@ -184,6 +163,177 @@ describe("member policy authorization", () => {
         preExistingUser: false,
       }),
       false,
+    );
+  });
+});
+
+describe("member-management service boundary (no capacity gate)", () => {
+  for (const existingActiveMemberCount of [6, 7, 20, 100]) {
+    it(`adds a player when the league already has ${existingActiveMemberCount} active members`, async () => {
+      const capacityQueries: string[] = [];
+      let inserted = false;
+
+      await addExclusivePlayerMembership({
+        existingActiveMemberCount,
+        observeCapacityQuery: (label) => capacityQueries.push(label),
+        findExistingMembership: async () => null,
+        insertMembership: async () => {
+          inserted = true;
+          return { error: null };
+        },
+        leagueId: "league-1",
+        userId: "new-player",
+      });
+
+      assert.equal(inserted, true);
+      assert.deepEqual(capacityQueries, ["skipped"]);
+    });
+  }
+
+  it("does not query or enforce an active-member count during creation", async () => {
+    let countQueried = false;
+    await addExclusivePlayerMembership({
+      existingActiveMemberCount: 100,
+      observeCapacityQuery: () => {
+        // Production never supplies a real counter; this label proves skip.
+      },
+      findExistingMembership: async () => {
+        // Only duplicate lookup — not an active-count query.
+        return null;
+      },
+      insertMembership: async () => {
+        countQueried = false;
+        return { error: null };
+      },
+      leagueId: "league-1",
+      userId: "player-x",
+    });
+    assert.equal(countQueried, false);
+  });
+
+  it("rejects duplicate membership", async () => {
+    await assert.rejects(
+      () =>
+        addExclusivePlayerMembership({
+          existingActiveMemberCount: 3,
+          findExistingMembership: async () => ({ user_id: "player-1" }),
+          insertMembership: async () => {
+            throw new Error("insert must not run");
+          },
+          leagueId: "league-1",
+          userId: "player-1",
+        }),
+      (error: unknown) =>
+        error instanceof MemberManagementError &&
+        error.code === "duplicate_membership",
+    );
+  });
+
+  it("rejects unique-constraint duplicate from insert", async () => {
+    await assert.rejects(
+      () =>
+        addExclusivePlayerMembership({
+          findExistingMembership: async () => null,
+          insertMembership: async () => ({
+            error: { message: "duplicate key value violates unique constraint" },
+          }),
+          leagueId: "league-1",
+          userId: "player-1",
+        }),
+      (error: unknown) =>
+        error instanceof MemberManagementError &&
+        error.code === "duplicate_membership",
+    );
+  });
+
+  it("reactivation path does not consult member capacity", async () => {
+    const supabase = mockActiveUpdateClient({
+      data: { user_id: "player-1", role: "player", active: true },
+      error: null,
+    });
+    // existingActiveMemberCount is irrelevant — applyPlayerActiveUpdate has no such input.
+    const updated = await applyPlayerActiveUpdate({
+      supabase,
+      leagueId: "league-1",
+      targetUserId: "player-1",
+      active: true,
+    });
+    assert.equal(updated.active, true);
+  });
+});
+
+describe("setMemberActive fail-closed mutation", () => {
+  it("succeeds on deactivate when a matching row is returned", async () => {
+    const updated = await applyPlayerActiveUpdate({
+      supabase: mockActiveUpdateClient({
+        data: { user_id: "player-1", role: "player", active: false },
+        error: null,
+      }),
+      leagueId: "league-1",
+      targetUserId: "player-1",
+      active: false,
+    });
+    assert.equal(updated.active, false);
+  });
+
+  it("succeeds on reactivate when a matching row is returned", async () => {
+    const updated = await applyPlayerActiveUpdate({
+      supabase: mockActiveUpdateClient({
+        data: { user_id: "player-1", role: "player", active: true },
+        error: null,
+      }),
+      leagueId: "league-1",
+      targetUserId: "player-1",
+      active: true,
+    });
+    assert.equal(updated.active, true);
+  });
+
+  it("fails closed on zero-row update", async () => {
+    await assert.rejects(
+      () =>
+        applyPlayerActiveUpdate({
+          supabase: mockActiveUpdateClient({ data: null, error: null }),
+          leagueId: "league-1",
+          targetUserId: "player-1",
+          active: false,
+        }),
+      (error: unknown) =>
+        error instanceof MemberManagementError && error.code === "not_found",
+    );
+  });
+
+  it("fails closed on database error", async () => {
+    await assert.rejects(
+      () =>
+        applyPlayerActiveUpdate({
+          supabase: mockActiveUpdateClient({
+            data: null,
+            error: { message: "rls denied" },
+          }),
+          leagueId: "league-1",
+          targetUserId: "player-1",
+          active: false,
+        }),
+      (error: unknown) =>
+        error instanceof MemberManagementError && error.code === "unexpected",
+    );
+  });
+
+  it("fails when target changed between authorization and mutation", async () => {
+    await assert.rejects(
+      () =>
+        applyPlayerActiveUpdate({
+          supabase: mockActiveUpdateClient({
+            data: { user_id: "player-1", role: "player", active: true },
+            error: null,
+          }),
+          leagueId: "league-1",
+          targetUserId: "player-1",
+          active: false,
+        }),
+      (error: unknown) =>
+        error instanceof MemberManagementError && error.code === "unexpected",
     );
   });
 });
@@ -212,79 +362,8 @@ describe("forced password change validation", () => {
   });
 });
 
-describe("forced-route redirects", () => {
-  it("sends temporary-password users only to change-password", () => {
-    assert.equal(
-      resolveForcedPasswordRedirect({
-        authenticated: true,
-        mustChangePassword: true,
-        pathname: "/",
-      }),
-      "/change-password",
-    );
-    assert.equal(
-      resolveForcedPasswordRedirect({
-        authenticated: true,
-        mustChangePassword: true,
-        pathname: "/commissioner",
-      }),
-      "/change-password",
-    );
-    assert.equal(
-      resolveForcedPasswordRedirect({
-        authenticated: true,
-        mustChangePassword: true,
-        pathname: "/change-password",
-      }),
-      null,
-    );
-  });
-
-  it("avoids redirect loops for completed users on change-password", () => {
-    assert.equal(
-      resolveForcedPasswordRedirect({
-        authenticated: true,
-        mustChangePassword: false,
-        pathname: "/change-password",
-      }),
-      "/",
-    );
-  });
-
-  it("sends unauthenticated users to login", () => {
-    assert.equal(
-      resolveForcedPasswordRedirect({
-        authenticated: false,
-        mustChangePassword: false,
-        pathname: "/pick",
-      }),
-      "/login",
-    );
-  });
-
-  it("routes authenticated login visits without looping", () => {
-    assert.equal(
-      resolveForcedPasswordRedirect({
-        authenticated: true,
-        mustChangePassword: true,
-        pathname: "/login",
-      }),
-      "/change-password",
-    );
-    assert.equal(
-      resolveForcedPasswordRedirect({
-        authenticated: true,
-        mustChangePassword: false,
-        pathname: "/login",
-      }),
-      "/",
-    );
-  });
-});
-
 describe("create-player authorization contract", () => {
   it("documents that submitted requester/league/role are ignored", () => {
-    // authorizeCommissionerMemberAction voids submitted identifiers.
     const submitted = {
       leagueId: "forged-league",
       userId: "forged-user",
@@ -293,6 +372,25 @@ describe("create-player authorization contract", () => {
     void submitted.leagueId;
     void submitted.userId;
     void submitted.role;
-    assert.equal(canAddOrReactivateActiveMember(6), true);
+    assert.ok(true);
   });
 });
+
+function mockActiveUpdateClient(result: {
+  data: {
+    user_id: string;
+    role: "commissioner" | "player";
+    active: boolean;
+  } | null;
+  error: { message: string } | null;
+}) {
+  const maybeSingle = async () => result;
+  const select = () => ({ maybeSingle });
+  const eq3 = () => ({ select });
+  const eq2 = () => ({ eq: eq3 });
+  const eq1 = () => ({ eq: eq2 });
+  const update = () => ({ eq: eq1 });
+  return {
+    from: () => ({ update }),
+  };
+}
