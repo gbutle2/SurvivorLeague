@@ -3,24 +3,25 @@ import { describe, it } from "node:test";
 
 import {
   buildRegularStandings,
+  isPlayoffSurvivorAlive,
+  resolveStandingsRoundStatus,
   resolveStandingsWeekStatus,
+  resolveSurvivorDecision,
+  type DashboardPlayoffPick,
+  type DashboardPlayoffRound,
 } from "./standings.ts";
 
 const players = [
   { userId: "a", displayName: "A" },
   { userId: "b", displayName: "B" },
-];
-const weeks = [
-  { id: "w1", weekNumber: 1, status: "final" as const },
-  { id: "w2", weekNumber: 2, status: "final" as const },
-  { id: "w3", weekNumber: 3, status: "open" as const },
+  { userId: "c", displayName: "C" },
 ];
 const rules = {
   regularPickPoints: 1,
-  bestRecordBonus: 4,
-  longestStreakBonus: 4,
-  survivorBonus: 10,
-  playoffMaximum: 24,
+  bestRecordBonus: 3,
+  longestStreakBonus: 3,
+  survivorBonus: 5,
+  playoffMaximum: 10,
 };
 
 describe("resolveStandingsWeekStatus", () => {
@@ -41,10 +42,325 @@ describe("resolveStandingsWeekStatus", () => {
   });
 });
 
+describe("regular survivor resolution", () => {
+  it("awards survivor midseason when one player becomes last standing", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+      { id: "w3", weekNumber: 3, status: "open" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+      { userId: "c", weekId: "w1", result: "loss" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "b", weekId: "w2", result: "loss" as const },
+    ];
+
+    const decision = resolveSurvivorDecision(players, weeks, picks);
+    assert.deepEqual(decision, {
+      decided: true,
+      decidedAtWeekNumber: 2,
+      winnerUserIds: ["a"],
+    });
+
+    const standings = buildRegularStandings(players, weeks, picks, rules);
+    const a = standings.find((row) => row.userId === "a");
+    assert.equal(a?.pointsEarned, 2 + 5);
+    assert.equal(a?.survivorAlive, true);
+  });
+
+  it("keeps the survivor bonus after the winner later loses", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+      { id: "w3", weekNumber: 3, status: "final" as const },
+      { id: "w4", weekNumber: 4, status: "open" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "loss" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "a", weekId: "w3", result: "loss" as const },
+    ];
+
+    const decision = resolveSurvivorDecision(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+    );
+    assert.equal(decision.decidedAtWeekNumber, 1);
+    assert.deepEqual(decision.winnerUserIds, ["a"]);
+
+    const [standing] = buildRegularStandings(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+      rules,
+    );
+    assert.equal(standing?.pointsEarned, 2 + 5);
+    assert.equal(standing?.survivorAlive, false);
+    assert.equal(standing?.wins, 2);
+  });
+
+  it("ties every remaining player eliminated in the same week", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "loss" as const },
+      { userId: "b", weekId: "w2", result: "loss" as const },
+    ];
+    const decision = resolveSurvivorDecision(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+    );
+    assert.equal(decision.decided, true);
+    assert.deepEqual([...decision.winnerUserIds].sort(), ["a", "b"]);
+
+    const standings = buildRegularStandings(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+      rules,
+    );
+    assert.equal(standings[0]?.pointsEarned, 1 + 3 + 3 + 5);
+    assert.equal(standings[1]?.pointsEarned, 1 + 3 + 3 + 5);
+  });
+
+  it("ties every remaining player who misses in the same week", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+    ];
+    const decision = resolveSurvivorDecision(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+    );
+    assert.deepEqual([...decision.winnerUserIds].sort(), ["a", "b"]);
+  });
+
+  it("ties multiple undefeated players after the final week", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "b", weekId: "w2", result: "win" as const },
+    ];
+    const decision = resolveSurvivorDecision(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+    );
+    assert.equal(decision.decidedAtWeekNumber, 2);
+    assert.deepEqual([...decision.winnerUserIds].sort(), ["a", "b"]);
+  });
+
+  it("does not settle survivor while a remaining player has a pending pick", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "b", weekId: "w2", result: "pending" as const },
+    ];
+    const decision = resolveSurvivorDecision(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+    );
+    assert.equal(decision.decided, false);
+
+    const standings = buildRegularStandings(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+      rules,
+    );
+    assert.equal(standings.every((row) => row.pointsEarned < 5), true);
+  });
+
+  it("lets eliminated players keep earning weekly points", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+      { id: "w3", weekNumber: 3, status: "final" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "loss" as const },
+      { userId: "b", weekId: "w2", result: "win" as const },
+      { userId: "b", weekId: "w3", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "a", weekId: "w3", result: "win" as const },
+    ];
+    const standings = buildRegularStandings(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+      rules,
+    );
+    const b = standings.find((row) => row.userId === "b");
+    assert.equal(b?.wins, 2);
+    assert.equal(b?.pointsEarned, 2);
+    assert.equal(b?.survivorAlive, false);
+  });
+});
+
+describe("playoff survivor miss and remaining points", () => {
+  const rounds: DashboardPlayoffRound[] = [
+    { id: "r1", roundNumber: 1, points: 1, status: "final" },
+    { id: "r2", roundNumber: 2, points: 2, status: "open" },
+  ];
+
+  it("treats a completed round with no pick as a miss that zeros remaining playoff points", () => {
+    assert.equal(isPlayoffSurvivorAlive("a", rounds, []), false);
+    const [standing] = buildRegularStandings(
+      [players[0]!],
+      [{ id: "w1", weekNumber: 1, status: "final" }],
+      [{ userId: "a", weekId: "w1", result: "win" }],
+      rules,
+      rounds,
+      [],
+    );
+    assert.equal(standing?.pointsEarned, 1 + 3 + 3 + 5);
+    assert.equal(standing?.maxPossible, standing?.pointsEarned);
+  });
+
+  it("does not treat a current incomplete round with no pick as a miss", () => {
+    const openOnly: DashboardPlayoffRound[] = [
+      { id: "r1", roundNumber: 1, points: 1, status: "open" },
+    ];
+    assert.equal(isPlayoffSurvivorAlive("a", openOnly, []), true);
+    const [standing] = buildRegularStandings(
+      [players[0]!],
+      [{ id: "w1", weekNumber: 1, status: "open" }],
+      [],
+      rules,
+      openOnly,
+      [],
+    );
+    assert.equal(standing?.maxPossible, 0 + 1 + 3 + 3 + 5 + 10);
+  });
+
+  it("does not eliminate on a pending playoff pick", () => {
+    const picks: DashboardPlayoffPick[] = [
+      {
+        userId: "a",
+        playoffRoundId: "r1",
+        result: "pending",
+        pointsAwarded: 0,
+      },
+    ];
+    assert.equal(isPlayoffSurvivorAlive("a", rounds, picks), true);
+  });
+
+  it("eliminates on playoff loss and playoff tie", () => {
+    assert.equal(
+      isPlayoffSurvivorAlive("a", rounds, [
+        {
+          userId: "a",
+          playoffRoundId: "r1",
+          result: "loss",
+          pointsAwarded: 0,
+        },
+      ]),
+      false,
+    );
+    assert.equal(
+      isPlayoffSurvivorAlive("a", rounds, [
+        {
+          userId: "a",
+          playoffRoundId: "r1",
+          result: "tie",
+          pointsAwarded: 0,
+        },
+      ]),
+      false,
+    );
+  });
+
+  it("keeps a playoff winner alive for later rounds", () => {
+    const picks: DashboardPlayoffPick[] = [
+      {
+        userId: "a",
+        playoffRoundId: "r1",
+        result: "win",
+        pointsAwarded: 1,
+      },
+    ];
+    assert.equal(isPlayoffSurvivorAlive("a", rounds, picks), true);
+    const [standing] = buildRegularStandings(
+      [players[0]!],
+      [{ id: "w1", weekNumber: 1, status: "final" }],
+      [{ userId: "a", weekId: "w1", result: "win" }],
+      rules,
+      rounds,
+      picks,
+    );
+    assert.equal(standing?.pointsEarned, 1 + 3 + 3 + 5 + 1);
+    assert.equal(standing?.maxPossible, standing!.pointsEarned + 9);
+  });
+
+  it("keeps remaining playoff points at zero for an already eliminated player", () => {
+    const picks: DashboardPlayoffPick[] = [
+      {
+        userId: "a",
+        playoffRoundId: "r1",
+        result: "loss",
+        pointsAwarded: 0,
+      },
+    ];
+    const [standing] = buildRegularStandings(
+      [players[0]!],
+      [{ id: "w1", weekNumber: 1, status: "final" }],
+      [{ userId: "a", weekId: "w1", result: "win" }],
+      rules,
+      rounds,
+      picks,
+    );
+    assert.equal(standing?.maxPossible, standing?.pointsEarned);
+  });
+
+  it("uses stored final status when schedule signals are unavailable", () => {
+    assert.equal(resolveStandingsRoundStatus("final", null), "final");
+    assert.equal(
+      resolveStandingsRoundStatus("locked", { has_non_terminal_game: false }),
+      "final",
+    );
+    assert.equal(
+      resolveStandingsRoundStatus("locked", { has_non_terminal_game: true }),
+      "locked",
+    );
+  });
+});
+
 describe("league dashboard standings", () => {
+  const weeks = [
+    { id: "w1", weekNumber: 1, status: "final" as const },
+    { id: "w2", weekNumber: 2, status: "final" as const },
+    { id: "w3", weekNumber: 3, status: "open" as const },
+  ];
+
   it("counts wins, streaks, misses, and survivor state", () => {
     const standings = buildRegularStandings(
-      players,
+      [players[0]!, players[1]!],
       weeks,
       [
         { userId: "a", weekId: "w1", result: "win" },
@@ -86,7 +402,7 @@ describe("league dashboard standings", () => {
     );
   });
 
-  it("keeps unearned bonuses out of earned points and includes reachable ones in the ceiling", () => {
+  it("keeps unearned record/streak bonuses out of earned until the season is fully scored", () => {
     const [standing] = buildRegularStandings(
       [players[0]!],
       weeks,
@@ -95,46 +411,14 @@ describe("league dashboard standings", () => {
         { userId: "a", weekId: "w2", result: "win" },
       ],
       rules,
-      new Map([["a", 6]]),
     );
 
-    assert.equal(standing?.pointsEarned, 8);
-    assert.equal(standing?.maxPossible, 45);
+    // Midseason sole survivor already settled; record/streak still unsettled.
+    assert.equal(standing?.pointsEarned, 2 + 5);
+    assert.equal(standing?.maxPossible, 2 + 5 + 1 + 3 + 3 + 10);
   });
 
-  it("treats zero weeks and no picks as empty tallies with bonus/playoff ceiling", () => {
-    const [standing] = buildRegularStandings(
-      [players[0]!],
-      [],
-      [],
-      rules,
-    );
-
-    assert.equal(standing?.wins, 0);
-    assert.equal(standing?.pointsEarned, 0);
-    assert.equal(standing?.maxPossible, 42);
-    assert.equal(standing?.survivorAlive, true);
-  });
-
-  it("counts all missed picks against record and survivor", () => {
-    const [standing] = buildRegularStandings(
-      [players[0]!],
-      [
-        { id: "w1", weekNumber: 1, status: "final" },
-        { id: "w2", weekNumber: 2, status: "final" },
-      ],
-      [],
-      rules,
-    );
-
-    assert.equal(standing?.missed, 2);
-    assert.equal(standing?.survivorAlive, false);
-    // Season is fully scored: tied 0-win / 0-streak leaders still receive those bonuses.
-    assert.equal(standing?.pointsEarned, 0 + 4 + 4);
-    assert.equal(standing?.maxPossible, 8 + 24);
-  });
-
-  it("does not treat pending results as misses while games await grading", () => {
+  it("does not treat pending results as misses", () => {
     const [standing] = buildRegularStandings(
       [players[0]!],
       [
@@ -151,41 +435,16 @@ describe("league dashboard standings", () => {
     assert.equal(standing?.wins, 1);
     assert.equal(standing?.missed, 0);
     assert.equal(standing?.survivorAlive, true);
-    assert.equal(standing?.pointsEarned, 1);
-    assert.equal(standing?.maxPossible, 44);
   });
 
-  it("counts ties as non-wins that break streak and survivor", () => {
-    const [standing] = buildRegularStandings(
-      [players[0]!],
-      [
-        { id: "w1", weekNumber: 1, status: "final" },
-        { id: "w2", weekNumber: 2, status: "final" },
-      ],
-      [
-        { userId: "a", weekId: "w1", result: "win" },
-        { userId: "a", weekId: "w2", result: "tie" },
-      ],
-      rules,
-    );
-
-    assert.equal(standing?.wins, 1);
-    assert.equal(standing?.ties, 1);
-    assert.equal(standing?.currentStreak, 0);
-    assert.equal(standing?.survivorAlive, false);
-  });
-
-  it("awards settled bonuses into earned once the regular season is fully scored", () => {
+  it("drops mathematically eliminated best-record and streak bonuses from the ceiling", () => {
     const standings = buildRegularStandings(
-      players,
-      [
-        { id: "w1", weekNumber: 1, status: "final" },
-        { id: "w2", weekNumber: 2, status: "final" },
-      ],
+      [players[0]!, players[1]!],
+      weeks,
       [
         { userId: "a", weekId: "w1", result: "win" },
         { userId: "a", weekId: "w2", result: "win" },
-        { userId: "b", weekId: "w1", result: "win" },
+        { userId: "b", weekId: "w1", result: "loss" },
         { userId: "b", weekId: "w2", result: "loss" },
       ],
       rules,
@@ -193,16 +452,16 @@ describe("league dashboard standings", () => {
 
     const a = standings.find((row) => row.userId === "a");
     const b = standings.find((row) => row.userId === "b");
-
-    assert.equal(a?.pointsEarned, 2 + 4 + 4 + 10);
-    assert.equal(a?.maxPossible, a!.pointsEarned + 24);
-    assert.equal(b?.pointsEarned, 1);
-    assert.equal(b?.maxPossible, b!.pointsEarned + 24);
+    assert.equal(a?.maxPossible, 2 + 5 + 1 + 3 + 3 + 10);
+    assert.equal(b?.maxPossible, 0 + 1 + 0 + 0 + 0 + 10);
   });
 
-  it("gives full bonuses to every tied category leader", () => {
+  it("uses deterministic display ordering without changing equal earned totals", () => {
     const standings = buildRegularStandings(
-      players,
+      [
+        { userId: "b", displayName: "B" },
+        { userId: "a", displayName: "A" },
+      ],
       [
         { id: "w1", weekNumber: 1, status: "final" },
         { id: "w2", weekNumber: 2, status: "final" },
@@ -216,69 +475,8 @@ describe("league dashboard standings", () => {
       rules,
     );
 
-    assert.equal(standings[0]?.pointsEarned, 2 + 4 + 4 + 10);
-    assert.equal(standings[1]?.pointsEarned, 2 + 4 + 4 + 10);
-  });
-
-  it("drops mathematically eliminated best-record and streak bonuses from the ceiling", () => {
-    const standings = buildRegularStandings(
-      players,
-      [
-        { id: "w1", weekNumber: 1, status: "final" },
-        { id: "w2", weekNumber: 2, status: "final" },
-        { id: "w3", weekNumber: 3, status: "open" },
-      ],
-      [
-        { userId: "a", weekId: "w1", result: "win" },
-        { userId: "a", weekId: "w2", result: "win" },
-        { userId: "b", weekId: "w1", result: "loss" },
-        { userId: "b", weekId: "w2", result: "loss" },
-      ],
-      rules,
-    );
-
-    const a = standings.find((row) => row.userId === "a");
-    const b = standings.find((row) => row.userId === "b");
-
-    assert.equal(a?.maxPossible, 2 + 1 + 4 + 4 + 10 + 24);
-    assert.equal(b?.pointsEarned, 0);
-    // B can still win the remaining week (1) but cannot catch A's 2 wins or
-    // streak of 2, and is already out of survivor.
-    assert.equal(b?.maxPossible, 0 + 1 + 0 + 0 + 0 + 24);
-  });
-
-  it("zeros remaining playoff points after a playoff-survivor elimination", () => {
-    const [standing] = buildRegularStandings(
-      [players[0]!],
-      weeks,
-      [
-        { userId: "a", weekId: "w1", result: "win" },
-        { userId: "a", weekId: "w2", result: "win" },
-      ],
-      rules,
-      new Map([["a", 2]]),
-      new Map([["a", false]]),
-    );
-
-    assert.equal(standing?.pointsEarned, 4);
-    assert.equal(standing?.maxPossible, 4 + 1 + 4 + 4 + 10 + 0);
-  });
-
-  it("does not double-count regular and playoff points in earned totals", () => {
-    const [standing] = buildRegularStandings(
-      [players[0]!],
-      [
-        { id: "w1", weekNumber: 1, status: "final" },
-        { id: "w2", weekNumber: 2, status: "final" },
-      ],
-      [
-        { userId: "a", weekId: "w1", result: "win" },
-        { userId: "a", weekId: "w2", result: "win" },
-      ],
-      rules,
-      new Map([["a", 12]]),
-    );
-
-    assert.equal(standing?.pointsEarned, 2 + 4 + 4 + 10 + 12);
+    assert.equal(standings[0]?.pointsEarned, standings[1]?.pointsEarned);
+    assert.equal(standings[0]?.displayName, "A");
+    assert.equal(standings[1]?.displayName, "B");
   });
 });

@@ -104,14 +104,34 @@ export default async function CommissionerPage() {
             Status: <strong>{context.season.status}</strong>
           </p>
           <p className="mt-1">
-            Regular weeks: <strong>{weeks.length}/18</strong> (from NFL sync)
+            Competition weeks:{" "}
+            <strong>
+              {
+                weeks.filter(
+                  (week) => week.week_number <= context.season.regularWeekCount,
+                ).length
+              }
+              /{context.season.regularWeekCount}
+            </strong>{" "}
+            (schedule may retain extra NFL weeks)
           </p>
           <p className="mt-1">
             Synced games: <strong>{gameCount ?? 0}</strong>
           </p>
           <p className="mt-1">
-            Perfect season target: <strong>18-0</strong> · Playoff max:{" "}
-            <strong>24</strong> (2/4/6/12)
+            Perfect season target:{" "}
+            <strong>{context.season.regularWeekCount}-0</strong> · Playoff max:{" "}
+            <strong>
+              {context.scoringRules
+                ? context.scoringRules.wildcardPoints +
+                  context.scoringRules.divisionalPoints +
+                  context.scoringRules.conferencePoints +
+                  context.scoringRules.superbowlPoints
+                : "—"}
+            </strong>
+            {context.scoringRules
+              ? ` (${context.scoringRules.wildcardPoints}/${context.scoringRules.divisionalPoints}/${context.scoringRules.conferencePoints}/${context.scoringRules.superbowlPoints})`
+              : ""}
           </p>
           {context.scoringRules ? (
             <p className="mt-1 text-stone-600">
@@ -176,11 +196,18 @@ export default async function CommissionerPage() {
         {context.season.status === "setup" ? (
           <ActivateSeasonForm
             year={context.season.year}
-            canActivate={activationBlock === null && weeks.length >= 18}
+            canActivate={
+              activationBlock === null &&
+              weeks.filter(
+                (week) => week.week_number <= context.season.regularWeekCount,
+              ).length >= context.season.regularWeekCount
+            }
             blockedReason={
               activationBlock ??
-              (weeks.length < 18
-                ? "Sync the NFL schedule so weeks 1–18 exist before activation."
+              (weeks.filter(
+                (week) => week.week_number <= context.season.regularWeekCount,
+              ).length < context.season.regularWeekCount
+                ? `Sync the NFL schedule so weeks 1–${context.season.regularWeekCount} exist before activation.`
                 : null)
             }
           />
@@ -198,7 +225,7 @@ export default async function CommissionerPage() {
           <StatusPanel title="No current NFL week" tone="warning">
             <p>
               {current.reason === "no_weeks"
-                ? "Sync the NFL schedule to create weeks 1–18."
+                ? `Sync the NFL schedule to create weeks 1–${context.season.regularWeekCount}.`
                 : "No week has a future kickoff remaining."}
             </p>
           </StatusPanel>

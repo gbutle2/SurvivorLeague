@@ -571,10 +571,12 @@ export async function syncNflSchedule(
     for (const season of seasons.rows) {
       if (season.year !== seasonYear) continue;
       await client.query(
-        `UPDATE public.seasons SET regular_week_count = 18 WHERE id = $1`,
+        `UPDATE public.seasons SET regular_week_count = 17 WHERE id = $1`,
         [season.id],
       );
 
+      // NFL schedule still has Weeks 1–18; competition length is regular_week_count (17).
+      // Extra week rows are retained and not deleted.
       for (let week = 1; week <= 18; week += 1) {
         const earliest = await client.query<{ kickoff: Date | null }>(
           `SELECT min(scheduled_kickoff_at) AS kickoff
@@ -605,10 +607,10 @@ export async function syncNflSchedule(
         name: string;
         points: number;
       }> = [
-        { number: 1, code: "wildcard", name: "Wild Card", points: 2 },
-        { number: 2, code: "divisional", name: "Divisional", points: 4 },
-        { number: 3, code: "conference", name: "Conference", points: 6 },
-        { number: 4, code: "superbowl", name: "Super Bowl", points: 12 },
+        { number: 1, code: "wildcard", name: "Wild Card", points: 1 },
+        { number: 2, code: "divisional", name: "Divisional", points: 2 },
+        { number: 3, code: "conference", name: "Conference", points: 3 },
+        { number: 4, code: "superbowl", name: "Super Bowl", points: 4 },
       ];
 
       for (const round of roundDefs) {

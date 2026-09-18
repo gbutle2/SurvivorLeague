@@ -25,6 +25,20 @@ export type DashboardRules = {
   playoffMaximum: number;
 };
 
+export type DashboardPlayoffRound = {
+  id: string;
+  roundNumber: number;
+  points: number;
+  status: "upcoming" | "open" | "locked" | "final";
+};
+
+export type DashboardPlayoffPick = {
+  userId: string;
+  playoffRoundId: string;
+  result: PickResult;
+  pointsAwarded: number;
+};
+
 export type Standing = {
   userId: string;
   displayName: string;
@@ -39,9 +53,15 @@ export type Standing = {
   maxPossible: number;
 };
 
+export type SurvivorDecision = {
+  decided: boolean;
+  decidedAtWeekNumber: number | null;
+  winnerUserIds: readonly string[];
+};
+
 /**
  * Prefer NFL game terminal status when schedule signals exist.
- * Stored week status is the fallback when games are not synced yet.
+ * Stored week/round status is the fallback when games are not synced yet.
  * Pending pick results are never treated as misses by the standings builder.
  */
 export function resolveStandingsWeekStatus(
@@ -52,6 +72,16 @@ export function resolveStandingsWeekStatus(
     return "final";
   }
   return weekStatus;
+}
+
+export function resolveStandingsRoundStatus(
+  roundStatus: DashboardPlayoffRound["status"],
+  signal: { has_non_terminal_game: boolean } | null | undefined,
+): DashboardPlayoffRound["status"] {
+  if (signal && !signal.has_non_terminal_game) {
+    return "final";
+  }
+  return roundStatus;
 }
 
 function resultFor(
@@ -65,6 +95,124 @@ function resultFor(
   );
 
   return pick?.result ?? null;
+}
+
+function playoffPickFor(
+  picks: DashboardPlayoffPick[],
+  userId: string,
+  playoffRoundId: string,
+): DashboardPlayoffPick | null {
+  return (
+    picks.find(
+      (candidate) =>
+        candidate.userId === userId &&
+        candidate.playoffRoundId === playoffRoundId,
+    ) ?? null
+  );
+}
+
+/**
+ * Deterministic survivor resolution: find the first week the competition ends.
+ * Pending/ungraded picks never eliminate and block settlement for that week.
+ */
+export function resolveSurvivorDecision(
+  players: DashboardPlayer[],
+  weeks: DashboardWeek[],
+  picks: DashboardPick[],
+): SurvivorDecision {
+  const orderedWeeks = [...weeks].sort((a, b) => a.weekNumber - b.weekNumber);
+  const alive = new Set(players.map((player) => player.userId));
+
+  if (alive.size === 0) {
+    return { decided: false, decidedAtWeekNumber: null, winnerUserIds: [] };
+  }
+
+  for (let index = 0; index < orderedWeeks.length; index += 1) {
+    const week = orderedWeeks[index]!;
+    if (week.status !== "final") {
+      return { decided: false, decidedAtWeekNumber: null, winnerUserIds: [] };
+    }
+
+    for (const userId of alive) {
+      if (resultFor(picks, userId, week.id) === "pending") {
+        return { decided: false, decidedAtWeekNumber: null, winnerUserIds: [] };
+      }
+    }
+
+    const aliveAtWeekStart = [...alive];
+    for (const userId of aliveAtWeekStart) {
+      const result = resultFor(picks, userId, week.id);
+      if (result === "win") continue;
+      alive.delete(userId);
+    }
+
+    if (alive.size === 1) {
+      return {
+        decided: true,
+        decidedAtWeekNumber: week.weekNumber,
+        winnerUserIds: [...alive],
+      };
+    }
+
+    if (alive.size === 0) {
+      return {
+        decided: true,
+        decidedAtWeekNumber: week.weekNumber,
+        winnerUserIds: aliveAtWeekStart,
+      };
+    }
+
+    const isFinalCompetitionWeek = index === orderedWeeks.length - 1;
+    if (isFinalCompetitionWeek) {
+      return {
+        decided: true,
+        decidedAtWeekNumber: week.weekNumber,
+        winnerUserIds: [...alive],
+      };
+    }
+  }
+
+  return { decided: false, decidedAtWeekNumber: null, winnerUserIds: [] };
+}
+
+/**
+ * A completed playoff round with no pick row is a miss and eliminates the player.
+ * Pending results do not eliminate. Non-terminal rounds do not count as misses.
+ */
+export function isPlayoffSurvivorAlive(
+  userId: string,
+  rounds: DashboardPlayoffRound[],
+  picks: DashboardPlayoffPick[],
+): boolean {
+  const orderedRounds = [...rounds].sort((a, b) => a.roundNumber - b.roundNumber);
+
+  for (const round of orderedRounds) {
+    if (round.status !== "final") {
+      continue;
+    }
+
+    const pick = playoffPickFor(picks, userId, round.id);
+    if (!pick) {
+      return false;
+    }
+    if (pick.result === "pending") {
+      return true;
+    }
+    if (pick.result !== "win") {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function sumPlayoffPointsForUser(
+  userId: string,
+  picks: DashboardPlayoffPick[],
+): number {
+  return picks
+    .filter((pick) => pick.userId === userId)
+    .reduce((sum, pick) => sum + pick.pointsAwarded, 0);
 }
 
 type PlayerTallies = {
@@ -86,8 +234,8 @@ function tallyPlayer(
   player: DashboardPlayer,
   orderedWeeks: DashboardWeek[],
   picks: DashboardPick[],
-  playoffPointsByUser: ReadonlyMap<string, number>,
-  playoffAliveByUser: ReadonlyMap<string, boolean>,
+  playoffPoints: number,
+  playoffAlive: boolean,
 ): PlayerTallies {
   let wins = 0;
   let losses = 0;
@@ -105,7 +253,6 @@ function tallyPlayer(
 
     const result = resultFor(picks, player.userId, week.id);
     if (result === "pending") {
-      // Games may be terminal before auto/commissioner grading finishes.
       unresolvedRegularWeeks += 1;
       continue;
     }
@@ -133,8 +280,8 @@ function tallyPlayer(
     currentStreak,
     survivorAlive: losses === 0 && ties === 0 && missed === 0,
     unresolvedRegularWeeks,
-    playoffPoints: playoffPointsByUser.get(player.userId) ?? 0,
-    playoffAlive: playoffAliveByUser.get(player.userId) ?? true,
+    playoffPoints,
+    playoffAlive,
   };
 }
 
@@ -168,19 +315,28 @@ export function buildRegularStandings(
   weeks: DashboardWeek[],
   picks: DashboardPick[],
   rules: DashboardRules,
-  playoffPointsByUser: ReadonlyMap<string, number> = new Map(),
-  playoffAliveByUser: ReadonlyMap<string, boolean> = new Map(),
+  playoffRounds: DashboardPlayoffRound[] = [],
+  playoffPicks: DashboardPlayoffPick[] = [],
 ): Standing[] {
   const orderedWeeks = [...weeks].sort((a, b) => a.weekNumber - b.weekNumber);
-  const tallies = players.map((player) =>
-    tallyPlayer(
+  const survivor = resolveSurvivorDecision(players, orderedWeeks, picks);
+  const survivorWinners = new Set(survivor.winnerUserIds);
+
+  const tallies = players.map((player) => {
+    const playoffPoints = sumPlayoffPointsForUser(player.userId, playoffPicks);
+    const playoffAlive = isPlayoffSurvivorAlive(
+      player.userId,
+      playoffRounds,
+      playoffPicks,
+    );
+    return tallyPlayer(
       player,
       orderedWeeks,
       picks,
-      playoffPointsByUser,
-      playoffAliveByUser,
-    ),
-  );
+      playoffPoints,
+      playoffAlive,
+    );
+  });
 
   const regularSeasonFullyScored =
     orderedWeeks.length > 0 &&
@@ -202,10 +358,10 @@ export function buildRegularStandings(
         if (player.longestStreak === bestStreak) {
           bonusPoints += rules.longestStreakBonus;
         }
-        // Tied survivors each receive the full regular-survivor bonus.
-        if (player.survivorAlive) {
-          bonusPoints += rules.survivorBonus;
-        }
+      }
+
+      if (survivor.decided && survivorWinners.has(player.userId)) {
+        bonusPoints += rules.survivorBonus;
       }
 
       const pointsEarned = regularPoints + bonusPoints + player.playoffPoints;
@@ -214,9 +370,7 @@ export function buildRegularStandings(
         : 0;
 
       let possibleBonuses = 0;
-      if (regularSeasonFullyScored) {
-        possibleBonuses = 0;
-      } else {
+      if (!regularSeasonFullyScored) {
         possibleBonuses += attainableBestRecordBonus(
           tallies,
           player,
@@ -227,9 +381,10 @@ export function buildRegularStandings(
           player,
           rules.longestStreakBonus,
         );
-        if (player.survivorAlive) {
-          possibleBonuses += rules.survivorBonus;
-        }
+      }
+
+      if (!survivor.decided && player.survivorAlive) {
+        possibleBonuses += rules.survivorBonus;
       }
 
       return {

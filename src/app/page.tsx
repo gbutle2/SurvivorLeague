@@ -7,10 +7,14 @@ import { NavCard } from "@/components/nav-card";
 import { StatusPanel } from "@/components/status-panel";
 import {
   buildRegularStandings,
+  resolveStandingsRoundStatus,
   resolveStandingsWeekStatus,
 } from "@/lib/dashboard/standings";
 import { isCommissioner, loadLeagueContext } from "@/lib/league/context";
-import { loadRegularWeekSignals } from "@/lib/nfl/schedule-query";
+import {
+  loadPlayoffRoundSignals,
+  loadRegularWeekSignals,
+} from "@/lib/nfl/schedule-query";
 import { createClient } from "@/lib/supabase/server";
 import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
@@ -28,19 +32,36 @@ export default async function HomePage() {
 
   const { context } = result;
   const supabase = await createClient();
-  const { weeks, error: weeksError } = await loadSeasonWeeks(supabase, context.season.id);
-  const [membersResult, signalsResult, playoffRoundsResult] = await Promise.all([
-    supabase.from("league_members").select("user_id").eq("league_id", context.league.id).eq("active", true),
-    loadRegularWeekSignals(supabase as never, context.season.year),
-    supabase.from("playoff_rounds").select("id").eq("season_id", context.season.id),
-  ]);
+  const { weeks: allWeeks, error: weeksError } = await loadSeasonWeeks(
+    supabase,
+    context.season.id,
+  );
+  // Competition uses regular_week_count (17). Extra synced weeks (e.g. Week 18)
+  // are retained in the database but excluded from standings and pick workflow.
+  const competitionWeeks = allWeeks.filter(
+    (week) => week.week_number <= context.season.regularWeekCount,
+  );
+  const [membersResult, signalsResult, playoffRoundSignalsResult, playoffRoundsResult] =
+    await Promise.all([
+      supabase
+        .from("league_members")
+        .select("user_id")
+        .eq("league_id", context.league.id)
+        .eq("active", true),
+      loadRegularWeekSignals(supabase as never, context.season.year),
+      loadPlayoffRoundSignals(supabase as never, context.season.year),
+      supabase
+        .from("playoff_rounds")
+        .select("id, round_number, points, status, round_code")
+        .eq("season_id", context.season.id),
+    ]);
 
   if (weeksError || membersResult.error || playoffRoundsResult.error) {
     return <DashboardError />;
   }
 
   const memberIds = (membersResult.data ?? []).map((member) => member.user_id);
-  const weekIds = weeks.map((week) => week.id);
+  const weekIds = competitionWeeks.map((week) => week.id);
   const playoffRoundIds = (playoffRoundsResult.data ?? []).map((round) => round.id);
   const [profilesResult, picksResult, playoffPicksResult] = await Promise.all([
     memberIds.length
@@ -52,7 +73,7 @@ export default async function HomePage() {
     playoffRoundIds.length
       ? supabase
           .from("playoff_picks")
-          .select("user_id, points_awarded, result")
+          .select("user_id, playoff_round_id, points_awarded, result")
           .in("playoff_round_id", playoffRoundIds)
       : Promise.resolve({ data: [], error: null }),
   ]);
@@ -63,21 +84,11 @@ export default async function HomePage() {
 
   const scoring = context.scoringRules;
   const playoffMaximum = scoring
-    ? scoring.wildcardPoints + scoring.divisionalPoints + scoring.conferencePoints + scoring.superbowlPoints
+    ? scoring.wildcardPoints +
+      scoring.divisionalPoints +
+      scoring.conferencePoints +
+      scoring.superbowlPoints
     : 0;
-  const playoffPoints = new Map<string, number>();
-  const playoffAlive = new Map<string, boolean>();
-  for (const pick of playoffPicksResult.data ?? []) {
-    playoffPoints.set(
-      pick.user_id,
-      (playoffPoints.get(pick.user_id) ?? 0) + pick.points_awarded,
-    );
-    if (pick.result === "loss" || pick.result === "tie") {
-      playoffAlive.set(pick.user_id, false);
-    } else if (!playoffAlive.has(pick.user_id)) {
-      playoffAlive.set(pick.user_id, true);
-    }
-  }
 
   const players = (profilesResult.data ?? []).map((profile) => ({
     userId: profile.id,
@@ -86,9 +97,13 @@ export default async function HomePage() {
   const signalByWeek = new Map(
     signalsResult.signals.map((signal) => [signal.week_number, signal]),
   );
+  const signalByRound = new Map(
+    playoffRoundSignalsResult.signals.map((signal) => [signal.round_code, signal]),
+  );
+
   const standings = buildRegularStandings(
     players,
-    weeks.map((week) => {
+    competitionWeeks.map((week) => {
       const signal = signalByWeek.get(week.week_number);
       return {
         id: week.id,
@@ -108,11 +123,29 @@ export default async function HomePage() {
       survivorBonus: scoring?.survivorBonus ?? 0,
       playoffMaximum,
     },
-    playoffPoints,
-    playoffAlive,
+    (playoffRoundsResult.data ?? []).map((round) => ({
+      id: round.id,
+      roundNumber: round.round_number,
+      points: round.points,
+      status: resolveStandingsRoundStatus(
+        round.status,
+        round.round_code
+          ? signalByRound.get(round.round_code)
+          : undefined,
+      ),
+    })),
+    (playoffPicksResult.data ?? []).map((pick) => ({
+      userId: pick.user_id,
+      playoffRoundId: pick.playoff_round_id,
+      result: pick.result,
+      pointsAwarded: pick.points_awarded,
+    })),
   );
 
-  const current = resolveCurrentWeekFromGames(weeks, signalsResult.signals);
+  const current = resolveCurrentWeekFromGames(
+    competitionWeeks,
+    signalsResult.signals,
+  );
   const currentWeek = current.kind === "actionable" ? current.week : null;
   const currentPicks = currentWeek
     ? (picksResult.data ?? []).filter((pick) => pick.week_id === currentWeek.id)
@@ -121,7 +154,9 @@ export default async function HomePage() {
   const { data: currentTeams, error: teamsError } = currentTeamIds.length
     ? await supabase.from("teams").select("id, abbreviation").in("id", currentTeamIds)
     : { data: [], error: null };
-  const teamById = new Map((currentTeams ?? []).map((team) => [team.id, team.abbreviation]));
+  const teamById = new Map(
+    (currentTeams ?? []).map((team) => [team.id, team.abbreviation]),
+  );
   const currentPickByUser = new Map(currentPicks.map((pick) => [pick.user_id, pick]));
   const currentSignal = currentWeek
     ? signalByWeek.get(currentWeek.week_number)
@@ -136,8 +171,6 @@ export default async function HomePage() {
           userId: player.userId,
           displayName: player.displayName,
           team: pick ? (teamById.get(pick.team_id) ?? "Team") : null,
-          // Absence of another player's row may mean "hidden by kickoff RLS" or
-          // "no pick"; never label that as missing before the week is complete.
           state: pick
             ? ("visible" as const)
             : player.userId === context.userId || weekFinished
@@ -148,28 +181,95 @@ export default async function HomePage() {
       })
     : [];
 
+  const extraWeeks = allWeeks.filter(
+    (week) => week.week_number > context.season.regularWeekCount,
+  );
+
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-6 sm:py-8">
       <header className="mb-5 flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-800">{context.league.name} · {context.season.year}</p>
-          <h1 className="mt-1 font-display text-2xl font-bold tracking-tight text-stone-900 sm:text-3xl">League Dashboard</h1>
-          <p className="mt-1 text-sm text-stone-600">Signed in as {context.displayName}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-800">
+            {context.league.name} · {context.season.year}
+          </p>
+          <h1 className="mt-1 font-display text-2xl font-bold tracking-tight text-stone-900 sm:text-3xl">
+            League Dashboard
+          </h1>
+          <p className="mt-1 text-sm text-stone-600">
+            Signed in as {context.displayName}
+          </p>
         </div>
         <LogoutButton />
       </header>
 
-      {!scoring ? <div className="mb-4"><StatusPanel title="Scoring rules missing" tone="warning"><p>The commissioner must configure scoring before point totals can be calculated.</p></StatusPanel></div> : null}
-      {teamsError ? <div className="mb-4"><StatusPanel title="Team names unavailable" tone="warning"><p>Weekly picks are visible, but team abbreviations could not be loaded.</p></StatusPanel></div> : null}
+      {!scoring ? (
+        <div className="mb-4">
+          <StatusPanel title="Scoring rules missing" tone="warning">
+            <p>
+              The commissioner must configure scoring before point totals can be
+              calculated.
+            </p>
+          </StatusPanel>
+        </div>
+      ) : null}
+      {teamsError ? (
+        <div className="mb-4">
+          <StatusPanel title="Team names unavailable" tone="warning">
+            <p>
+              Weekly picks are visible, but team abbreviations could not be loaded.
+            </p>
+          </StatusPanel>
+        </div>
+      ) : null}
+      {extraWeeks.length > 0 ? (
+        <div className="mb-4">
+          <StatusPanel title="Extra schedule weeks retained" tone="warning">
+            <p>
+              This season is configured for {context.season.regularWeekCount}{" "}
+              regular-season picks. Week{" "}
+              {extraWeeks.map((week) => week.week_number).join(", ")} remain in
+              the database from schedule sync and are not scored.
+            </p>
+          </StatusPanel>
+        </div>
+      ) : null}
 
-      <LeagueDashboard currentUserId={context.userId} weekNumber={currentWeek?.week_number ?? null} weekLabel={currentWeek?.label ?? "No active week"} standings={standings} weeklyPicks={weeklyPicks} />
+      <LeagueDashboard
+        currentUserId={context.userId}
+        weekNumber={currentWeek?.week_number ?? null}
+        weekLabel={currentWeek?.label ?? "No active week"}
+        standings={standings}
+        weeklyPicks={weeklyPicks}
+      />
 
       <nav className="mt-7 grid gap-3 sm:grid-cols-2" aria-label="League navigation">
-        <NavCard title="Make pick" description="Choose your team for the current NFL week." href="/pick" />
-        <NavCard title="Team availability" description="See which regular-season teams you can still use." href="/availability" />
-        <NavCard title="My history" description="Review your prior picks and results." href="/history" />
-        <NavCard title="League rules" description="See scoring, survivor, playoff, and tiebreak rules." href="/rules" />
-        {isCommissioner(context) ? <NavCard title="Commissioner" description="Manage members, schedule sync, and exceptional overrides." href="/commissioner" /> : null}
+        <NavCard
+          title="Make pick"
+          description="Choose your team for the current NFL week."
+          href="/pick"
+        />
+        <NavCard
+          title="Team availability"
+          description="See which regular-season teams you can still use."
+          href="/availability"
+        />
+        <NavCard
+          title="My history"
+          description="Review your prior picks and results."
+          href="/history"
+        />
+        <NavCard
+          title="League rules"
+          description="See scoring, survivor, playoff, and tiebreak rules."
+          href="/rules"
+        />
+        {isCommissioner(context) ? (
+          <NavCard
+            title="Commissioner"
+            description="Manage members, schedule sync, and exceptional overrides."
+            href="/commissioner"
+          />
+        ) : null}
       </nav>
     </main>
   );
@@ -178,7 +278,9 @@ export default async function HomePage() {
 function DashboardError() {
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:py-8">
-      <StatusPanel title="Dashboard unavailable" tone="danger"><p>Could not load the league standings. Try again shortly.</p></StatusPanel>
+      <StatusPanel title="Dashboard unavailable" tone="danger">
+        <p>Could not load the league standings. Try again shortly.</p>
+      </StatusPanel>
     </main>
   );
 }

@@ -13,7 +13,7 @@ import {
 function sampleDocument(
   overrides?: Partial<BootstrapImportDocument>,
 ): BootstrapImportDocument {
-  const weeks = Array.from({ length: 18 }, (_, index) => {
+  const weeks = Array.from({ length: 17 }, (_, index) => {
     const weekNumber = index + 1;
     return {
       week_number: weekNumber,
@@ -37,17 +37,17 @@ function sampleDocument(
     season: {
       year: 2026,
       status: "active",
-      regular_week_count: 18,
+      regular_week_count: 17,
     },
     scoring_rules: {
       correct_regular_pick_points: 1,
-      best_record_bonus: 4,
-      longest_streak_bonus: 4,
-      survivor_bonus: 10,
-      wildcard_points: 2,
-      divisional_points: 4,
-      conference_points: 6,
-      superbowl_points: 12,
+      best_record_bonus: 3,
+      longest_streak_bonus: 3,
+      survivor_bonus: 5,
+      wildcard_points: 1,
+      divisional_points: 2,
+      conference_points: 3,
+      superbowl_points: 4,
       perfect_season_override: true,
     },
     members: [
@@ -128,7 +128,7 @@ describe("bootstrap import foundation", () => {
 
   it("requires sequential weeks matching regular_week_count", () => {
     const doc = sampleDocument();
-    doc.weeks = doc.weeks.slice(0, 16);
+    doc.weeks = doc.weeks.slice(0, 15);
     const validated = validateBootstrapDocument(doc);
     assert.equal(validated.ok, false);
   });
