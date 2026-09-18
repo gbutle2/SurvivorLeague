@@ -25,7 +25,8 @@ Required CSV columns: `game_id`, `season`, `game_type`, `week`, `gameday`, `game
 
 Mapped:
 
-- `REG` weeks 1–18 → regular season
+- `REG` weeks 1–18 → regular season (league competition uses all 18 calendar weeks)
+
 - `WC` / `DIV` / `CON` / `SB` → playoff rounds
 - Team abbreviations (including `LA` → `LAR`)
 - Kickoff = Eastern wall clock (`America/New_York`) from `gameday` + `gametime` → UTC storage → Central display

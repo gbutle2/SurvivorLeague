@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-/** Perfect regular season requires 18 wins under Phase 2B-B rules. */
+/** Perfect regular season requires 18 wins under authoritative league rules. */
 export function isPerfectRegularSeason(wins: number, weekCount = 18): boolean {
   return wins === weekCount;
 }
@@ -14,6 +14,10 @@ export function playoffPointsTotal(roundWins: number[]): number {
   );
 }
 
+export function overallMaximumPoints(): number {
+  return 18 + 4 + 4 + 10 + 24;
+}
+
 describe("scoring defaults (18-week season)", () => {
   it("perfect season requires 18 wins", () => {
     assert.equal(isPerfectRegularSeason(17), false);
@@ -23,5 +27,9 @@ describe("scoring defaults (18-week season)", () => {
   it("playoff maximum is 24", () => {
     assert.equal(playoffPointsTotal([1, 1, 1, 1]), 24);
     assert.equal(playoffPointsTotal([1, 1, 0, 0]), 6);
+  });
+
+  it("overall maximum is 60", () => {
+    assert.equal(overallMaximumPoints(), 60);
   });
 });

@@ -148,13 +148,13 @@ export function CreateWeekForm() {
           Time).
         </p>
 
-        <Field label="Week number (1–17)" htmlFor="create-week-number">
+        <Field label="Week number (1–18)" htmlFor="create-week-number">
           <input
             id="create-week-number"
             name="week_number"
             type="number"
             min={1}
-            max={17}
+            max={18}
             required
             className={inputClass}
           />

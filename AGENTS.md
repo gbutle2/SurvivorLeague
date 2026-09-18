@@ -31,17 +31,21 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - One NFL team per player per week
 - Selected team must play that NFL week; pick locks at that team’s kickoff
 - No regular-season team reuse
-- Eliminated players continue making weekly picks
+- Eliminated players continue making weekly picks for points
 - Win = 1 point; loss or tie = 0
 - Missed pick is not a win, breaks streak, and eliminates from regular survivor
 - Best record = 4 bonus points
 - Longest streak = 4 bonus points
 - Regular survivor winner = 10 bonus points
 - Tied category leaders each receive the full bonus
+- Survivor bonus goes to every player who survives the greatest number of weeks (all 18-0 players qualify; if nobody is 18-0, the longest survivor streak(s) win)
+- Pending picks never eliminate a player or settle the survivor result
 - One 18-0 player automatically wins overall
 - Multiple 18-0 players use the playoff survivor as the tiebreak
 - Playoffs are a separate survivor with a fresh used-team list
 - Playoff points are 2 / 4 / 6 / 12 (maximum 24)
+- Overall maximum is 60 points (18 weekly + 18 bonuses + 24 playoff)
+- A missed pick in a completed playoff round eliminates that player from playoff survivor
 - Central Time
 - Other players’ picks remain hidden until the relevant kickoff/deadline
 - Undefined cases such as cancellations, postponements, and exhausted playoff tiebreaks must not be guessed

@@ -66,10 +66,12 @@ VALUES ('<season-id>');
 Do not create weeks one-by-one for a normal season.
 
 1. Activate scoring rules + season when ready
-2. On **Commissioner**, use **Configure season calendar** with all 17 Central Time deadlines as JSON
+2. On **Commissioner**, sync the NFL schedule so regular weeks 1–18 exist (preferred), or use **Configure season calendar** with all 18 Central Time deadlines as JSON
 3. Open the current week when players should pick; lock when the deadline passes
 
 Single-week create remains only under **Exceptional: create a single week manually**.
+
+Default scoring for new seasons: weekly win 1; bonuses 4 / 4 / 10; playoffs 2 / 4 / 6 / 12 (max 24); perfect season 18-0; overall maximum 60.
 
 See also:
 
