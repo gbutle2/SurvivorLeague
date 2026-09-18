@@ -8,7 +8,6 @@ import {
   temporaryPasswordMeetsPolicy,
 } from "@/lib/members/temp-password";
 import {
-  MAX_ACTIVE_LEAGUE_MEMBERS,
   MemberManagementError,
   logMemberError,
   normalizeDisplayName,
@@ -19,7 +18,6 @@ import {
 import {
   assertDeactivateAllowed,
   assertPlayerPasswordResetAllowed,
-  assertReactivateCapacity,
 } from "@/lib/members/policy";
 import { createAdminClient, isAdminConfigError } from "@/lib/supabase/admin";
 import {
@@ -69,24 +67,6 @@ export async function authorizeCommissionerMemberAction(_submitted?: {
 }): Promise<LeagueContext> {
   void _submitted;
   return requireActiveCommissioner();
-}
-
-async function countActiveMembers(
-  supabase: Awaited<ReturnType<typeof createServerClient>>,
-  leagueId: string,
-): Promise<number> {
-  const { count, error } = await supabase
-    .from("league_members")
-    .select("user_id", { count: "exact", head: true })
-    .eq("league_id", leagueId)
-    .eq("active", true);
-  if (error) {
-    throw new MemberManagementError(
-      "unexpected",
-      "Could not verify league membership capacity.",
-    );
-  }
-  return count ?? 0;
 }
 
 function isDuplicateEmailError(message: string): boolean {
@@ -199,13 +179,6 @@ export async function createPlayerAccount(input: {
   }
 
   const supabase = await createServerClient();
-  const activeCount = await countActiveMembers(supabase, context.league.id);
-  if (activeCount >= MAX_ACTIVE_LEAGUE_MEMBERS) {
-    throw new MemberManagementError(
-      "member_limit",
-      `This league already has ${MAX_ACTIVE_LEAGUE_MEMBERS} active members.`,
-    );
-  }
 
   let admin: AdminClient;
   try {
@@ -515,14 +488,6 @@ export async function setMemberActive(input: {
     actorUserId: context.userId,
     target,
   });
-
-  if (input.active && membership && !membership.active) {
-    const activeCount = await countActiveMembers(supabase, context.league.id);
-    assertReactivateCapacity({
-      currentlyActive: membership.active,
-      activeCount,
-    });
-  }
 
   if (membership!.active === input.active) {
     return;

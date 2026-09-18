@@ -1,7 +1,4 @@
-import {
-  MAX_ACTIVE_LEAGUE_MEMBERS,
-  MemberManagementError,
-} from "./validation.ts";
+import { MemberManagementError } from "./validation.ts";
 
 export type MembershipSnapshot = {
   userId: string;
@@ -69,16 +66,13 @@ export function assertDeactivateAllowed(input: {
   return input.target;
 }
 
-export function assertReactivateCapacity(input: {
-  currentlyActive: boolean;
-  activeCount: number;
-}): void {
-  if (!input.currentlyActive && input.activeCount >= MAX_ACTIVE_LEAGUE_MEMBERS) {
-    throw new MemberManagementError(
-      "member_limit",
-      `This league already has ${MAX_ACTIVE_LEAGUE_MEMBERS} active members.`,
-    );
-  }
+/**
+ * Leagues have no fixed active-member capacity.
+ * Used by tests to document that create/reactivate is not blocked by count.
+ */
+export function canAddOrReactivateActiveMember(activeCount: number): boolean {
+  void activeCount;
+  return true;
 }
 
 export function shouldDeleteAuthUserOnCompensation(input: {

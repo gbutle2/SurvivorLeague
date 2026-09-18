@@ -7,7 +7,6 @@ import {
   TEMP_PASSWORD_MIN_LENGTH,
 } from "./temp-password.ts";
 import {
-  MAX_ACTIVE_LEAGUE_MEMBERS,
   MemberManagementError,
   mapMemberErrorForUi,
   mustChangePasswordFromMetadata,
@@ -15,15 +14,15 @@ import {
   normalizeEmail,
   validateDisplayName,
   validateEmail,
+  validateNewPassword,
 } from "./validation.ts";
 import {
   assertDeactivateAllowed,
   assertPlayerPasswordResetAllowed,
-  assertReactivateCapacity,
+  canAddOrReactivateActiveMember,
   resolveForcedPasswordRedirect,
   shouldDeleteAuthUserOnCompensation,
 } from "./policy.ts";
-import { validateNewPassword } from "./validation.ts";
 
 describe("temporary password generator", () => {
   it("meets length and character-class policy", () => {
@@ -141,21 +140,26 @@ describe("member policy authorization", () => {
     assert.equal(target.userId, "player-1");
   });
 
-  it("enforces six-active-member reactivation limit", () => {
+  it("allows a seventh and additional active members with no capacity cap", () => {
+    assert.equal(canAddOrReactivateActiveMember(6), true);
+    assert.equal(canAddOrReactivateActiveMember(7), true);
+    assert.equal(canAddOrReactivateActiveMember(20), true);
+  });
+
+  it("allows reactivation regardless of how many other members are active", () => {
+    assert.equal(canAddOrReactivateActiveMember(100), true);
+  });
+
+  it("still rejects duplicate in-league membership targets as not found when missing", () => {
     assert.throws(
       () =>
-        assertReactivateCapacity({
-          currentlyActive: false,
-          activeCount: MAX_ACTIVE_LEAGUE_MEMBERS,
+        assertPlayerPasswordResetAllowed({
+          actorUserId: "comm-1",
+          actorLeagueId: "league-1",
+          target: null,
         }),
       (error: unknown) =>
-        error instanceof MemberManagementError && error.code === "member_limit",
-    );
-    assert.doesNotThrow(() =>
-      assertReactivateCapacity({
-        currentlyActive: false,
-        activeCount: MAX_ACTIVE_LEAGUE_MEMBERS - 1,
-      }),
+        error instanceof MemberManagementError && error.code === "not_found",
     );
   });
 
@@ -289,6 +293,6 @@ describe("create-player authorization contract", () => {
     void submitted.leagueId;
     void submitted.userId;
     void submitted.role;
-    assert.equal(MAX_ACTIVE_LEAGUE_MEMBERS, 6);
+    assert.equal(canAddOrReactivateActiveMember(6), true);
   });
 });

@@ -23,13 +23,11 @@ const initial: MembersActionState = {
 type MembersManagerProps = {
   members: MemberListItem[];
   activeCount: number;
-  maxActive: number;
 };
 
 export function MembersManager({
   members,
   activeCount,
-  maxActive,
 }: MembersManagerProps) {
   const [createState, createAction, createPending] = useActionState(
     createPlayerAction,
@@ -152,8 +150,8 @@ export function MembersManager({
       <section className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
         <h2 className="text-base font-semibold text-stone-900">Create player</h2>
         <p className="mt-1 text-sm text-stone-600">
-          Active members: {activeCount}/{maxActive}. New accounts receive a
-          one-time temporary password.
+          Active members: {activeCount}. New accounts receive a one-time
+          temporary password.
         </p>
         <form action={createAction} className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1.5 text-sm font-medium text-stone-700">
@@ -180,7 +178,7 @@ export function MembersManager({
           <input type="hidden" name="role" value="commissioner" />
           <button
             type="submit"
-            disabled={createPending || activeCount >= maxActive}
+            disabled={createPending}
             className="mt-1 inline-flex min-h-11 items-center justify-center rounded-lg bg-emerald-800 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {createPending ? "Creating…" : "Create player"}
@@ -287,9 +285,7 @@ export function MembersManager({
                         <input type="hidden" name="user_id" value={member.userId} />
                         <button
                           type="submit"
-                          disabled={
-                            reactivatePending || activeCount >= maxActive
-                          }
+                          disabled={reactivatePending}
                           className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-emerald-800 px-4 text-sm font-semibold text-white disabled:opacity-60"
                         >
                           {reactivatePending ? "Reactivating…" : "Reactivate"}
