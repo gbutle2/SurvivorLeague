@@ -9,7 +9,7 @@ export type PickTeamRef = {
  * selection remains selectable.
  */
 export function usedTeamIds(
-  picks: PickTeamRef[],
+  picks: readonly PickTeamRef[],
   options?: { excludeWeekId?: string | null },
 ): Set<string> {
   const used = new Set<string>();
