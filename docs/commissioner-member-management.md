@@ -32,7 +32,7 @@ Absent `must_change_password` means false (existing commissioner accounts).
 
 Players cannot clear the flag with the browser Supabase client (`app_metadata` is Admin-only).
 
-Resetting an existing player’s temporary password still uses a cryptographically generated password (not commissioner-entered).
+Resetting an existing player’s temporary password also uses a commissioner-entered password (confirmed twice, same policy). The password is shown once after save and forces `must_change_password` on next login.
 
 ## Deactivation versus deletion
 

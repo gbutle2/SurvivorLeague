@@ -88,17 +88,24 @@ export async function resetPasswordAction(
   formData: FormData,
 ): Promise<MembersActionState> {
   try {
-    const confirmed = String(formData.get("confirm") ?? "") === "yes";
-    if (!confirmed) {
+    void formData.get("league_id");
+    const targetUserId = String(formData.get("user_id") ?? "");
+    const temporaryPassword = String(formData.get("temporary_password") ?? "");
+    const temporaryPasswordConfirmation = String(
+      formData.get("temporary_password_confirmation") ?? "",
+    );
+
+    if (temporaryPassword !== temporaryPasswordConfirmation) {
       return {
         ...empty,
-        error: "Confirm that you want to issue a new temporary password.",
+        error: "Temporary password and confirmation must match.",
       };
     }
 
-    void formData.get("league_id");
-    const targetUserId = String(formData.get("user_id") ?? "");
-    const result = await resetPlayerTemporaryPassword({ targetUserId });
+    const result = await resetPlayerTemporaryPassword({
+      targetUserId,
+      temporaryPassword,
+    });
 
     // Password status flips to temporary — refresh the member list.
     refreshMembersPage();
@@ -109,7 +116,7 @@ export async function resetPasswordAction(
         "Temporary password reset. Share it now — it is shown only once.",
       temporaryPassword: result.temporaryPassword,
       createdEmail: result.email,
-      createdDisplayName: null,
+      createdDisplayName: result.displayName,
     };
   } catch (error) {
     return {

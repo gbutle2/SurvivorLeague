@@ -50,6 +50,7 @@ export function MembersManager({
   const [dismissedPassword, setDismissedPassword] = useState<string | null>(
     null,
   );
+  const [resetOpenUserId, setResetOpenUserId] = useState<string | null>(null);
 
   const latestPassword =
     createState.temporaryPassword || resetState.temporaryPassword || null;
@@ -57,6 +58,12 @@ export function MembersManager({
     latestPassword && latestPassword !== dismissedPassword
       ? latestPassword
       : null;
+
+  // Keep the disclosure closed while a successful reset password is still shown.
+  const resetFormSuppressed =
+    Boolean(resetState.temporaryPassword) &&
+    resetState.temporaryPassword !== dismissedPassword;
+  const activeResetUserId = resetFormSuppressed ? null : resetOpenUserId;
 
   const flash = visiblePassword
     ? createState.temporaryPassword
@@ -137,7 +144,10 @@ export function MembersManager({
             <form action={dismissAction} className="sm:ml-auto">
               <button
                 type="submit"
-                onClick={() => setDismissedPassword(visiblePassword)}
+                onClick={() => {
+                  setDismissedPassword(visiblePassword);
+                  setResetOpenUserId(null);
+                }}
                 className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-amber-400 bg-white px-4 text-sm font-semibold text-amber-950 sm:w-auto"
               >
                 Dismiss
@@ -259,29 +269,72 @@ export function MembersManager({
                   <div className="mt-2 flex flex-col gap-2 border-t border-stone-100 pt-3">
                     {member.active ? (
                       <>
-                        <form action={resetAction} className="flex flex-col gap-2">
-                          <input type="hidden" name="user_id" value={member.userId} />
-                          <input type="hidden" name="league_id" value="ignore" />
-                          <label className="flex min-h-11 items-center gap-2 text-sm text-stone-700">
+                        {activeResetUserId === member.userId ? (
+                          <form
+                            action={resetAction}
+                            className="flex flex-col gap-3 rounded-lg border border-stone-200 bg-stone-50 p-3"
+                          >
                             <input
-                              type="checkbox"
-                              name="confirm"
-                              value="yes"
-                              className="size-4"
-                              required
+                              type="hidden"
+                              name="user_id"
+                              value={member.userId}
                             />
-                            Confirm password reset
-                          </label>
+                            <input type="hidden" name="league_id" value="ignore" />
+                            <label className="flex flex-col gap-1.5 text-sm font-medium text-stone-700">
+                              Temporary password
+                              <input
+                                name="temporary_password"
+                                type="password"
+                                required
+                                minLength={20}
+                                autoComplete="new-password"
+                                className="h-11 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1.5 text-sm font-medium text-stone-700">
+                              Confirm temporary password
+                              <input
+                                name="temporary_password_confirmation"
+                                type="password"
+                                required
+                                minLength={20}
+                                autoComplete="new-password"
+                                className="h-11 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
+                              />
+                            </label>
+                            <p className="text-xs leading-relaxed text-stone-500">
+                              Must be at least 20 characters and include
+                              uppercase, lowercase, a number, and a symbol.
+                            </p>
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                              <button
+                                type="submit"
+                                disabled={resetPending}
+                                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-lg bg-emerald-800 px-4 text-sm font-semibold text-white disabled:opacity-60"
+                              >
+                                {resetPending
+                                  ? "Saving…"
+                                  : "Save temporary password"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={resetPending}
+                                onClick={() => setResetOpenUserId(null)}
+                                className="inline-flex min-h-11 items-center justify-center rounded-lg border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-900 disabled:opacity-60"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
                           <button
-                            type="submit"
-                            disabled={resetPending}
+                            type="button"
+                            onClick={() => setResetOpenUserId(member.userId)}
                             className="inline-flex min-h-11 items-center justify-center rounded-lg border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-900"
                           >
-                            {resetPending
-                              ? "Resetting…"
-                              : "Reset temporary password"}
+                            Set new temporary password
                           </button>
-                        </form>
+                        )}
                         <form
                           action={deactivateAction}
                           className="flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 p-3"

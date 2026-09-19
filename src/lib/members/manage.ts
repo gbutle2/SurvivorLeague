@@ -4,7 +4,6 @@ import { type SupabaseClient, type User } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/database.types";
 import {
-  generateTemporaryPassword,
   temporaryPasswordMeetsPolicy,
 } from "@/lib/members/temp-password";
 import {
@@ -328,11 +327,23 @@ export async function createPlayerAccount(input: {
 
 export async function resetPlayerTemporaryPassword(input: {
   targetUserId: string;
-}): Promise<{ temporaryPassword: string; email: string | null }> {
+  temporaryPassword: string;
+}): Promise<{
+  temporaryPassword: string;
+  email: string | null;
+  displayName: string | null;
+}> {
   const context = await requireActiveCommissioner();
   const targetUserId = input.targetUserId.trim();
   if (!targetUserId) {
     throw new MemberManagementError("not_found", "Player not found.");
+  }
+
+  if (!temporaryPasswordMeetsPolicy(input.temporaryPassword)) {
+    throw new MemberManagementError(
+      "invalid_password",
+      "Temporary password must be at least 20 characters and include uppercase, lowercase, a number, and a symbol.",
+    );
   }
 
   const supabase = await createServerClient();
@@ -376,7 +387,7 @@ export async function resetPlayerTemporaryPassword(input: {
     throw error;
   }
 
-  const temporaryPassword = generateTemporaryPassword();
+  const temporaryPassword = input.temporaryPassword;
   const { data, error: updateError } = await admin.auth.admin.updateUserById(
     targetUserId,
     {
@@ -393,6 +404,12 @@ export async function resetPlayerTemporaryPassword(input: {
     );
   }
 
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("display_name")
+    .eq("id", targetUserId)
+    .maybeSingle();
+
   // Session revocation: Admin signOut requires a user JWT in this SDK version.
   // We do not have other sessions' JWTs, so existing sessions are not force-revoked.
   // Documented limitation — player must use the new temporary password on next login.
@@ -400,6 +417,7 @@ export async function resetPlayerTemporaryPassword(input: {
   return {
     temporaryPassword,
     email: data.user.email ?? null,
+    displayName: profile?.display_name ?? null,
   };
 }
 

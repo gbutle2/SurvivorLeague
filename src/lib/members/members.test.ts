@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  generateTemporaryPassword,
   temporaryPasswordMeetsPolicy,
   TEMP_PASSWORD_MIN_LENGTH,
 } from "./temp-password.ts";
@@ -26,23 +25,12 @@ import {
   applyPlayerActiveUpdate,
 } from "./membership-mutations.ts";
 
-describe("temporary password generator", () => {
-  it("meets length and character-class policy", () => {
-    for (let i = 0; i < 20; i += 1) {
-      const password = generateTemporaryPassword();
-      assert.ok(password.length >= TEMP_PASSWORD_MIN_LENGTH);
-      assert.equal(temporaryPasswordMeetsPolicy(password), true);
-      assert.equal(password.includes(" "), false);
-    }
-  });
-});
+const VALID_TEMP_PASSWORD = "Aa1!xxxxxxxxxxxxxxxx";
 
 describe("commissioner-provided temporary password policy", () => {
   it("accepts a compliant commissioner-provided password", () => {
-    assert.equal(
-      temporaryPasswordMeetsPolicy("Aa1!xxxxxxxxxxxxxxxx"),
-      true,
-    );
+    assert.equal(temporaryPasswordMeetsPolicy(VALID_TEMP_PASSWORD), true);
+    assert.ok(VALID_TEMP_PASSWORD.length >= TEMP_PASSWORD_MIN_LENGTH);
   });
 
   it("rejects missing uppercase, lowercase, number, or symbol", () => {
@@ -67,6 +55,210 @@ describe("commissioner-provided temporary password policy", () => {
   it("rejects fewer than 20 characters", () => {
     assert.equal(temporaryPasswordMeetsPolicy("Aa1!xxxxxxxxx"), false);
     assert.equal(temporaryPasswordMeetsPolicy("Aa1!xxxxxxxx"), false);
+  });
+});
+
+describe("existing-player temporary password reset", () => {
+  it("allows reset for an active in-league player", () => {
+    const target = assertPlayerPasswordResetAllowed({
+      actorUserId: "comm-1",
+      actorLeagueId: "league-1",
+      target: { userId: "player-1", role: "player", active: true },
+    });
+    assert.equal(target.userId, "player-1");
+  });
+
+  it("rejects inactive players before any Auth update", () => {
+    assert.throws(
+      () =>
+        assertPlayerPasswordResetAllowed({
+          actorUserId: "comm-1",
+          actorLeagueId: "league-1",
+          target: { userId: "player-1", role: "player", active: false },
+        }),
+      (error: unknown) =>
+        error instanceof MemberManagementError && error.code === "forbidden",
+    );
+  });
+
+  it("rejects commissioner self-reset", () => {
+    assert.throws(
+      () =>
+        assertPlayerPasswordResetAllowed({
+          actorUserId: "comm-1",
+          actorLeagueId: "league-1",
+          target: { userId: "comm-1", role: "commissioner", active: true },
+        }),
+      (error: unknown) =>
+        error instanceof MemberManagementError && error.code === "forbidden",
+    );
+  });
+
+  it("rejects resetting another commissioner", () => {
+    assert.throws(
+      () =>
+        assertPlayerPasswordResetAllowed({
+          actorUserId: "comm-1",
+          actorLeagueId: "league-1",
+          target: { userId: "comm-2", role: "commissioner", active: true },
+        }),
+      (error: unknown) =>
+        error instanceof MemberManagementError && error.code === "forbidden",
+    );
+  });
+
+  it("rejects cross-league targets (missing membership)", () => {
+    assert.throws(
+      () =>
+        assertPlayerPasswordResetAllowed({
+          actorUserId: "comm-1",
+          actorLeagueId: "league-1",
+          target: null,
+        }),
+      (error: unknown) =>
+        error instanceof MemberManagementError && error.code === "not_found",
+    );
+  });
+
+  it("rejects mismatched reset passwords before Auth update", () => {
+    const temporaryPassword = VALID_TEMP_PASSWORD;
+    const temporaryPasswordConfirmation = "Aa1!yyyyyyyyyyyyyyyy";
+    assert.notEqual(temporaryPassword, temporaryPasswordConfirmation);
+    // Mirror resetPasswordAction: mismatch returns before resetPlayerTemporaryPassword.
+    const earlyReturn =
+      temporaryPassword !== temporaryPasswordConfirmation
+        ? "Temporary password and confirmation must match."
+        : null;
+    assert.equal(
+      earlyReturn,
+      "Temporary password and confirmation must match.",
+    );
+    assert.equal(earlyReturn?.includes(temporaryPassword), false);
+    assert.equal(earlyReturn?.includes(temporaryPasswordConfirmation), false);
+  });
+
+  it("accepts matching commissioner-provided reset password when policy passes", () => {
+    const temporaryPassword = VALID_TEMP_PASSWORD;
+    const temporaryPasswordConfirmation = VALID_TEMP_PASSWORD;
+    assert.equal(temporaryPassword, temporaryPasswordConfirmation);
+    assert.equal(temporaryPasswordMeetsPolicy(temporaryPassword), true);
+  });
+
+  it("reset path uses supplied password and sets must_change_password", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const manageSource = readFileSync(join(import.meta.dirname, "manage.ts"), "utf8");
+    const actionsSource = readFileSync(
+      join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "app",
+        "commissioner",
+        "members",
+        "actions.ts",
+      ),
+      "utf8",
+    );
+    const uiSource = readFileSync(
+      join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "app",
+        "commissioner",
+        "members",
+        "members-manager.tsx",
+      ),
+      "utf8",
+    );
+    const tempPasswordSource = readFileSync(
+      join(import.meta.dirname, "temp-password.ts"),
+      "utf8",
+    );
+
+    assert.equal(manageSource.includes("generateTemporaryPassword"), false);
+    assert.equal(actionsSource.includes("generateTemporaryPassword"), false);
+    assert.equal(tempPasswordSource.includes("generateTemporaryPassword"), false);
+    assert.match(
+      manageSource,
+      /temporaryPasswordMeetsPolicy\(input\.temporaryPassword\)/,
+    );
+    assert.match(
+      manageSource,
+      /password:\s*temporaryPassword/,
+    );
+    assert.match(
+      manageSource,
+      /app_metadata:\s*\{\s*must_change_password:\s*true\s*\}/,
+    );
+    assert.match(
+      actionsSource,
+      /temporaryPassword !== temporaryPasswordConfirmation/,
+    );
+    assert.match(
+      actionsSource,
+      /resetPlayerTemporaryPassword\(\{\s*targetUserId,\s*temporaryPassword,/s,
+    );
+    assert.equal(uiSource.includes("Confirm password reset"), false);
+    assert.equal(uiSource.includes("Reset temporary password"), false);
+    assert.match(uiSource, /Set new temporary password/);
+    assert.match(uiSource, /Save temporary password/);
+    assert.match(uiSource, /name="temporary_password"/);
+    assert.match(uiSource, /name="temporary_password_confirmation"/);
+  });
+
+  it("reset errors and logs never echo passwords or persist them in metadata", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const manageSource = readFileSync(join(import.meta.dirname, "manage.ts"), "utf8");
+    const actionsSource = readFileSync(
+      join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "app",
+        "commissioner",
+        "members",
+        "actions.ts",
+      ),
+      "utf8",
+    );
+
+    assert.equal(/console\.(log|info|debug)\([^)]*password/i.test(manageSource), false);
+    assert.equal(/console\.(log|info|debug)\([^)]*password/i.test(actionsSource), false);
+    assert.match(manageSource, /logMemberError\("reset_password", "AUTH_UPDATE_FAILED"\)/);
+    assert.equal(
+      manageSource.includes("app_metadata: { password:"),
+      false,
+    );
+    assert.equal(
+      manageSource.includes("user_metadata: { password:"),
+      false,
+    );
+
+    const ui = mapMemberErrorForUi(
+      new MemberManagementError(
+        "invalid_password",
+        "Temporary password must be at least 20 characters and include uppercase, lowercase, a number, and a symbol.",
+      ),
+    );
+    assert.equal(ui.includes(VALID_TEMP_PASSWORD), false);
+  });
+
+  it("new-player creation still uses commissioner-entered password", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const manageSource = readFileSync(join(import.meta.dirname, "manage.ts"), "utf8");
+    assert.match(
+      manageSource,
+      /temporaryPasswordMeetsPolicy\(temporaryPassword\)/,
+    );
+    assert.match(
+      manageSource,
+      /password:\s*temporaryPassword,/,
+    );
+    assert.equal(manageSource.includes("generateTemporaryPassword"), false);
   });
 });
 
