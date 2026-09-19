@@ -245,6 +245,11 @@ export default async function HomePage() {
           description="See scoring, survivor, playoff, and tiebreak rules."
           href="/rules"
         />
+        <NavCard
+          title="Account"
+          description="Update your display name, email, and password."
+          href="/account"
+        />
         {isCommissioner(context) ? (
           <NavCard
             title="Commissioner"

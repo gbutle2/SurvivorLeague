@@ -132,6 +132,28 @@ describe("forced-route redirects", () => {
       "/change-password",
     );
   });
+
+  it("sends unauthenticated /account visitors to login", () => {
+    assert.equal(
+      resolveForcedPasswordRedirect({
+        authenticated: false,
+        mustChangePassword: false,
+        pathname: "/account",
+      }),
+      "/login",
+    );
+  });
+
+  it("blocks forced-password users from /account", () => {
+    assert.equal(
+      resolveForcedPasswordRedirect({
+        authenticated: true,
+        mustChangePassword: true,
+        pathname: "/account",
+      }),
+      "/change-password",
+    );
+  });
 });
 
 describe("cookie-preserving redirects", () => {
