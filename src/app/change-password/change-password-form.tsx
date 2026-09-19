@@ -6,6 +6,10 @@ import {
   changePasswordAction,
   type ChangePasswordState,
 } from "@/app/change-password/actions";
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_POLICY_HINT,
+} from "@/lib/members/password-policy";
 
 const initial: ChangePasswordState = { error: null };
 
@@ -30,7 +34,7 @@ export function ChangePasswordForm() {
             type={showNew ? "text" : "password"}
             autoComplete="new-password"
             required
-            minLength={12}
+            minLength={PASSWORD_MIN_LENGTH}
             className="h-11 min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
           />
           <button
@@ -57,7 +61,7 @@ export function ChangePasswordForm() {
             type={showConfirm ? "text" : "password"}
             autoComplete="new-password"
             required
-            minLength={12}
+            minLength={PASSWORD_MIN_LENGTH}
             className="h-11 min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
           />
           <button
@@ -69,6 +73,10 @@ export function ChangePasswordForm() {
           </button>
         </div>
       </div>
+
+      <p className="text-xs leading-relaxed text-stone-500">
+        {PASSWORD_POLICY_HINT}
+      </p>
 
       {state.error ? (
         <p

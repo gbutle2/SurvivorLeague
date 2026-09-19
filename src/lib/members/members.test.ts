@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_POLICY_HINT,
+  passwordMeetsPolicy,
   temporaryPasswordMeetsPolicy,
   TEMP_PASSWORD_MIN_LENGTH,
+  validatePassword,
 } from "./temp-password.ts";
 import {
   MemberManagementError,
@@ -25,36 +29,117 @@ import {
   applyPlayerActiveUpdate,
 } from "./membership-mutations.ts";
 
-const VALID_TEMP_PASSWORD = "Aa1!xxxxxxxxxxxxxxxx";
+const VALID_PASSWORD = "abcdefgh";
 
-describe("commissioner-provided temporary password policy", () => {
-  it("accepts a compliant commissioner-provided password", () => {
-    assert.equal(temporaryPasswordMeetsPolicy(VALID_TEMP_PASSWORD), true);
-    assert.ok(VALID_TEMP_PASSWORD.length >= TEMP_PASSWORD_MIN_LENGTH);
+describe("shared password policy (8-character minimum)", () => {
+  it("accepts exactly 8 characters", () => {
+    assert.equal(passwordMeetsPolicy("abcdefgh"), true);
+    assert.equal(temporaryPasswordMeetsPolicy("abcdefgh"), true);
+    assert.equal(validatePassword("abcdefgh"), null);
+    assert.equal(validateNewPassword("abcdefgh"), null);
   });
 
-  it("rejects missing uppercase, lowercase, number, or symbol", () => {
-    assert.equal(
-      temporaryPasswordMeetsPolicy("aa1!xxxxxxxxxxxxxxxx"),
-      false,
-    );
-    assert.equal(
-      temporaryPasswordMeetsPolicy("AA1!XXXXXXXXXXXXXXXX"),
-      false,
-    );
-    assert.equal(
-      temporaryPasswordMeetsPolicy("Aa!xxxxxxxxxxxxxxxxx"),
-      false,
-    );
-    assert.equal(
-      temporaryPasswordMeetsPolicy("Aa1xxxxxxxxxxxxxxxxx"),
-      false,
-    );
+  it("accepts more than 8 characters", () => {
+    assert.equal(passwordMeetsPolicy("abcdefghi"), true);
+    assert.equal(validateNewPassword("abcdefghi"), null);
   });
 
-  it("rejects fewer than 20 characters", () => {
-    assert.equal(temporaryPasswordMeetsPolicy("Aa1!xxxxxxxxx"), false);
-    assert.equal(temporaryPasswordMeetsPolicy("Aa1!xxxxxxxx"), false);
+  it("rejects 7 characters or fewer", () => {
+    assert.equal(passwordMeetsPolicy("abcdefg"), false);
+    assert.equal(temporaryPasswordMeetsPolicy("abcdefg"), false);
+    assert.equal(validatePassword("abcdefg"), PASSWORD_POLICY_HINT);
+    assert.equal(validateNewPassword("abcdefg"), PASSWORD_POLICY_HINT);
+    assert.equal(passwordMeetsPolicy(""), false);
+  });
+
+  it("rejects non-string input", () => {
+    assert.equal(passwordMeetsPolicy(null), false);
+    assert.equal(passwordMeetsPolicy(undefined), false);
+    assert.equal(passwordMeetsPolicy(12345678), false);
+  });
+
+  it("accepts lowercase-only, uppercase-only, numeric-only, and no-symbol passwords", () => {
+    assert.equal(passwordMeetsPolicy("password"), true);
+    assert.equal(passwordMeetsPolicy("PASSWORD"), true);
+    assert.equal(passwordMeetsPolicy("12345678"), true);
+    assert.equal(passwordMeetsPolicy("abcdefgh"), true);
+    assert.equal(validateNewPassword("password"), null);
+    assert.equal(validateNewPassword("PASSWORD"), null);
+    assert.equal(validateNewPassword("12345678"), null);
+  });
+
+  it("exposes a shared minimum of 8", () => {
+    assert.equal(PASSWORD_MIN_LENGTH, 8);
+    assert.equal(TEMP_PASSWORD_MIN_LENGTH, 8);
+    assert.equal(PASSWORD_POLICY_HINT, "Use at least 8 characters.");
+  });
+
+  it("rejects mismatched confirmations without echoing passwords", () => {
+    const password = VALID_PASSWORD;
+    const confirmation = "abcdefghij";
+    assert.notEqual(password, confirmation);
+    const earlyReturn =
+      password !== confirmation
+        ? "Temporary password and confirmation must match."
+        : null;
+    assert.equal(
+      earlyReturn,
+      "Temporary password and confirmation must match.",
+    );
+    assert.equal(earlyReturn?.includes(password), false);
+    assert.equal(earlyReturn?.includes(confirmation), false);
+  });
+
+  it("player creation and reset enforce the shared 8-character rule", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const manageSource = readFileSync(join(import.meta.dirname, "manage.ts"), "utf8");
+    const policySource = readFileSync(
+      join(import.meta.dirname, "password-policy.ts"),
+      "utf8",
+    );
+    assert.match(policySource, /PASSWORD_MIN_LENGTH\s*=\s*8/);
+    assert.equal(/\[A-Z\]/.test(policySource), false);
+    assert.equal(/\[a-z\]/.test(policySource), false);
+    assert.equal(/\[0-9\]/.test(policySource), false);
+    assert.match(
+      manageSource,
+      /temporaryPasswordMeetsPolicy\(temporaryPassword\)/,
+    );
+    assert.match(
+      manageSource,
+      /temporaryPasswordMeetsPolicy\(input\.temporaryPassword\)/,
+    );
+    assert.match(manageSource, /PASSWORD_POLICY_HINT/);
+    assert.equal(manageSource.includes("at least 20"), false);
+    assert.equal(manageSource.includes("uppercase"), false);
+  });
+
+  it("forced permanent-password change uses the shared 8-character rule", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const changeSource = readFileSync(
+      join(import.meta.dirname, "password-change.ts"),
+      "utf8",
+    );
+    const validationSource = readFileSync(
+      join(import.meta.dirname, "validation.ts"),
+      "utf8",
+    );
+    assert.match(changeSource, /validateNewPassword\(input\.newPassword\)/);
+    assert.match(validationSource, /validatePassword\(password\)/);
+    assert.equal(validationSource.includes("at least 12"), false);
+    assert.equal(validationSource.includes("uppercase"), false);
+    assert.equal(validateNewPassword("short"), PASSWORD_POLICY_HINT);
+    assert.equal(validateNewPassword("abcdefgh"), null);
+  });
+
+  it("passwords remain absent from logs, metadata persistence, and errors", () => {
+    const ui = mapMemberErrorForUi(
+      new MemberManagementError("invalid_password", PASSWORD_POLICY_HINT),
+    );
+    assert.equal(ui, PASSWORD_POLICY_HINT);
+    assert.equal(ui.includes(VALID_PASSWORD), false);
   });
 });
 
@@ -121,10 +206,9 @@ describe("existing-player temporary password reset", () => {
   });
 
   it("rejects mismatched reset passwords before Auth update", () => {
-    const temporaryPassword = VALID_TEMP_PASSWORD;
-    const temporaryPasswordConfirmation = "Aa1!yyyyyyyyyyyyyyyy";
+    const temporaryPassword = VALID_PASSWORD;
+    const temporaryPasswordConfirmation = "hgfedcba";
     assert.notEqual(temporaryPassword, temporaryPasswordConfirmation);
-    // Mirror resetPasswordAction: mismatch returns before resetPlayerTemporaryPassword.
     const earlyReturn =
       temporaryPassword !== temporaryPasswordConfirmation
         ? "Temporary password and confirmation must match."
@@ -138,8 +222,8 @@ describe("existing-player temporary password reset", () => {
   });
 
   it("accepts matching commissioner-provided reset password when policy passes", () => {
-    const temporaryPassword = VALID_TEMP_PASSWORD;
-    const temporaryPasswordConfirmation = VALID_TEMP_PASSWORD;
+    const temporaryPassword = VALID_PASSWORD;
+    const temporaryPasswordConfirmation = VALID_PASSWORD;
     assert.equal(temporaryPassword, temporaryPasswordConfirmation);
     assert.equal(temporaryPasswordMeetsPolicy(temporaryPassword), true);
   });
@@ -206,6 +290,8 @@ describe("existing-player temporary password reset", () => {
     assert.match(uiSource, /Save temporary password/);
     assert.match(uiSource, /name="temporary_password"/);
     assert.match(uiSource, /name="temporary_password_confirmation"/);
+    assert.match(uiSource, /minLength=\{PASSWORD_MIN_LENGTH\}/);
+    assert.match(uiSource, /PASSWORD_POLICY_HINT/);
   });
 
   it("reset errors and logs never echo passwords or persist them in metadata", async () => {
@@ -238,12 +324,9 @@ describe("existing-player temporary password reset", () => {
     );
 
     const ui = mapMemberErrorForUi(
-      new MemberManagementError(
-        "invalid_password",
-        "Temporary password must be at least 20 characters and include uppercase, lowercase, a number, and a symbol.",
-      ),
+      new MemberManagementError("invalid_password", PASSWORD_POLICY_HINT),
     );
-    assert.equal(ui.includes(VALID_TEMP_PASSWORD), false);
+    assert.equal(ui.includes(VALID_PASSWORD), false);
   });
 
   it("new-player creation still uses commissioner-entered password", async () => {
@@ -510,6 +593,7 @@ describe("member-management service boundary (no member-count gate)", () => {
       "validation.ts",
       "password-change.ts",
       "temp-password.ts",
+      "password-policy.ts",
     ];
     const forbidden = [
       /existingActiveMemberCount/,
@@ -627,10 +711,12 @@ describe("forced password change validation", () => {
     );
   });
 
-  it("requires a sufficiently strong new password", () => {
-    assert.match(validateNewPassword("short") ?? "", /at least/i);
-    assert.match(validateNewPassword("alllowercase12") ?? "", /uppercase/i);
-    assert.equal(validateNewPassword("GoodPassword1"), null);
+  it("requires at least 8 characters with no complexity rules", () => {
+    assert.equal(validateNewPassword("short"), PASSWORD_POLICY_HINT);
+    assert.equal(validateNewPassword("abcdefg"), PASSWORD_POLICY_HINT);
+    assert.equal(validateNewPassword("abcdefgh"), null);
+    assert.equal(validateNewPassword("password"), null);
+    assert.equal(validateNewPassword("12345678"), null);
   });
 });
 

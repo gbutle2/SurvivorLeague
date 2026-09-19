@@ -11,6 +11,10 @@ import {
   type MembersActionState,
 } from "@/app/commissioner/members/actions";
 import type { MemberListItem } from "@/lib/members/manage";
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_POLICY_HINT,
+} from "@/lib/members/password-policy";
 
 const initial: MembersActionState = {
   error: null,
@@ -189,7 +193,7 @@ export function MembersManager({
               name="temporary_password"
               type="password"
               required
-              minLength={20}
+              minLength={PASSWORD_MIN_LENGTH}
               autoComplete="new-password"
               className="h-11 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
             />
@@ -200,14 +204,13 @@ export function MembersManager({
               name="temporary_password_confirmation"
               type="password"
               required
-              minLength={20}
+              minLength={PASSWORD_MIN_LENGTH}
               autoComplete="new-password"
               className="h-11 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
             />
           </label>
           <p className="text-xs leading-relaxed text-stone-500">
-            Must be at least 20 characters and include uppercase, lowercase, a
-            number, and a symbol. It is never stored in the database.
+            {PASSWORD_POLICY_HINT} It is never stored in the database.
           </p>
           <input type="hidden" name="league_id" value="ignore-me" />
           <input type="hidden" name="requester_id" value="ignore-me" />
@@ -286,7 +289,7 @@ export function MembersManager({
                                 name="temporary_password"
                                 type="password"
                                 required
-                                minLength={20}
+                                minLength={PASSWORD_MIN_LENGTH}
                                 autoComplete="new-password"
                                 className="h-11 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
                               />
@@ -297,14 +300,13 @@ export function MembersManager({
                                 name="temporary_password_confirmation"
                                 type="password"
                                 required
-                                minLength={20}
+                                minLength={PASSWORD_MIN_LENGTH}
                                 autoComplete="new-password"
                                 className="h-11 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
                               />
                             </label>
                             <p className="text-xs leading-relaxed text-stone-500">
-                              Must be at least 20 characters and include
-                              uppercase, lowercase, a number, and a symbol.
+                              {PASSWORD_POLICY_HINT}
                             </p>
                             <div className="flex flex-col gap-2 sm:flex-row">
                               <button

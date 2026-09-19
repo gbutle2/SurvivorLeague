@@ -4,6 +4,7 @@ import { type SupabaseClient, type User } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/database.types";
 import {
+  PASSWORD_POLICY_HINT,
   temporaryPasswordMeetsPolicy,
 } from "@/lib/members/temp-password";
 import {
@@ -187,7 +188,7 @@ export async function createPlayerAccount(input: {
   if (!temporaryPasswordMeetsPolicy(temporaryPassword)) {
     throw new MemberManagementError(
       "invalid_password",
-      "Temporary password must be at least 20 characters and include uppercase, lowercase, a number, and a symbol.",
+      PASSWORD_POLICY_HINT,
     );
   }
 
@@ -342,7 +343,7 @@ export async function resetPlayerTemporaryPassword(input: {
   if (!temporaryPasswordMeetsPolicy(input.temporaryPassword)) {
     throw new MemberManagementError(
       "invalid_password",
-      "Temporary password must be at least 20 characters and include uppercase, lowercase, a number, and a symbol.",
+      PASSWORD_POLICY_HINT,
     );
   }
 

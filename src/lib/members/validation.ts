@@ -51,14 +51,11 @@ export function mustChangePasswordFromMetadata(
   return appMetadata?.must_change_password === true;
 }
 
+import { validatePassword } from "./password-policy.ts";
+
+/** Permanent-password policy — same shared rule as temporary passwords. */
 export function validateNewPassword(password: string): string | null {
-  if (password.length < 12) {
-    return "Password must be at least 12 characters.";
-  }
-  if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
-    return "Password must include uppercase, lowercase, and a number.";
-  }
-  return null;
+  return validatePassword(password);
 }
 
 export function mapMemberErrorForUi(error: unknown): string {
