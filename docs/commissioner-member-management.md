@@ -21,15 +21,18 @@ Service-role use **never** replaces requester authorization: every Admin call is
 
 ## Temporary-password lifecycle
 
-1. Commissioner creates a player → Auth user with `email_confirm: true`, `app_metadata.must_change_password = true`, role `player`.
-2. Cryptographically generated temporary password (≥20 chars, mixed classes) is returned **once** in the commissioner UI (copy + dismiss). It is not stored in Postgres, metadata, logs, or URLs.
-3. Player signs in → middleware forces `/change-password`.
-4. Player sets a new password via their session; Admin clears `must_change_password` to `false`.
-5. Player is signed out and must sign in with the new password.
+1. Commissioner creates a player and enters a temporary password (confirmed twice) that meets policy: ≥20 characters with uppercase, lowercase, a number, and a symbol. Server-side validation rejects mismatches and policy failures before Auth user creation.
+2. Auth user is created with that password, `email_confirm: true`, `app_metadata.must_change_password = true`, and role `player`. The password is never stored in Postgres, metadata, logs, or URLs.
+3. The temporary password is shown **once** in the commissioner UI (copy + dismiss) so it can be shared out of band.
+4. Player signs in → middleware forces `/change-password`.
+5. Player sets a new password via their session; Admin clears `must_change_password` to `false`.
+6. Player is signed out and must sign in with the new password.
 
 Absent `must_change_password` means false (existing commissioner accounts).
 
 Players cannot clear the flag with the browser Supabase client (`app_metadata` is Admin-only).
+
+Resetting an existing player’s temporary password still uses a cryptographically generated password (not commissioner-entered).
 
 ## Deactivation versus deletion
 
@@ -50,7 +53,7 @@ Players cannot clear the flag with the browser Supabase client (`app_metadata` i
 
 1. Set `SUPABASE_SERVICE_ROLE_KEY` in `.env.local` (local Supabase or project key).
 2. Sign in as an active commissioner.
-3. Open `/commissioner/members`, create a player, copy the one-time password.
+3. Open `/commissioner/members`, create a player with a compliant temporary password (and confirmation), then copy the one-time display if needed.
 4. Sign out, sign in as the player, complete `/change-password`.
 5. Confirm the player can reach the home page and that `must_change_password` is cleared.
 

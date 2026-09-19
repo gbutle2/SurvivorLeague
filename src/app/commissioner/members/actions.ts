@@ -46,9 +46,22 @@ export async function createPlayerAction(
     void formData.get("requester_id");
     void formData.get("role");
 
+    const temporaryPassword = String(formData.get("temporary_password") ?? "");
+    const temporaryPasswordConfirmation = String(
+      formData.get("temporary_password_confirmation") ?? "",
+    );
+
+    if (temporaryPassword !== temporaryPasswordConfirmation) {
+      return {
+        ...empty,
+        error: "Temporary password and confirmation must match.",
+      };
+    }
+
     const result = await createPlayerAccount({
       email: String(formData.get("email") ?? ""),
       displayName: String(formData.get("display_name") ?? ""),
+      temporaryPassword,
       leagueId: String(formData.get("league_id") ?? "") || null,
     });
 

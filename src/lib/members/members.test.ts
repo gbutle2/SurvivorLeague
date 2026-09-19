@@ -37,6 +37,39 @@ describe("temporary password generator", () => {
   });
 });
 
+describe("commissioner-provided temporary password policy", () => {
+  it("accepts a compliant commissioner-provided password", () => {
+    assert.equal(
+      temporaryPasswordMeetsPolicy("Aa1!xxxxxxxxxxxxxxxx"),
+      true,
+    );
+  });
+
+  it("rejects missing uppercase, lowercase, number, or symbol", () => {
+    assert.equal(
+      temporaryPasswordMeetsPolicy("aa1!xxxxxxxxxxxxxxxx"),
+      false,
+    );
+    assert.equal(
+      temporaryPasswordMeetsPolicy("AA1!XXXXXXXXXXXXXXXX"),
+      false,
+    );
+    assert.equal(
+      temporaryPasswordMeetsPolicy("Aa!xxxxxxxxxxxxxxxxx"),
+      false,
+    );
+    assert.equal(
+      temporaryPasswordMeetsPolicy("Aa1xxxxxxxxxxxxxxxxx"),
+      false,
+    );
+  });
+
+  it("rejects fewer than 20 characters", () => {
+    assert.equal(temporaryPasswordMeetsPolicy("Aa1!xxxxxxxxx"), false);
+    assert.equal(temporaryPasswordMeetsPolicy("Aa1!xxxxxxxx"), false);
+  });
+});
+
 describe("member validation", () => {
   it("normalizes email to trimmed lowercase", () => {
     assert.equal(normalizeEmail("  Alex@Example.COM "), "alex@example.com");
