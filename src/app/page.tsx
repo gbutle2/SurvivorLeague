@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
+import { AccountMenuHeader } from "@/components/account-menu-header";
 import { LeagueDashboard } from "@/components/league-dashboard";
 import { LeagueContextError } from "@/components/league-context-error";
-import { LogoutButton } from "@/components/logout-button";
 import { NavCard } from "@/components/nav-card";
 import { StatusPanel } from "@/components/status-panel";
 import {
@@ -193,7 +193,7 @@ export default async function HomePage() {
             Signed in as {context.displayName}
           </p>
         </div>
-        <LogoutButton />
+        <AccountMenuHeader />
       </header>
 
       {!scoring ? (
@@ -244,11 +244,6 @@ export default async function HomePage() {
           title="League rules"
           description="See scoring, survivor, playoff, and tiebreak rules."
           href="/rules"
-        />
-        <NavCard
-          title="Account"
-          description="Update your display name, email, and password."
-          href="/account"
         />
         {isCommissioner(context) ? (
           <NavCard
