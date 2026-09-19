@@ -1,5 +1,6 @@
 import type pg from "pg";
 
+import { reconcileRegularWeekFinalStatuses } from "../weeks/reconcile-final.ts";
 import { csvToObjects } from "./csv.ts";
 import { parseProviderGames, type ParsedProviderGame } from "./parse-schedule.ts";
 import {
@@ -647,6 +648,7 @@ export async function syncNflSchedule(
     }
 
     await applyAutomaticPickResults(client, seasonYear);
+    await reconcileRegularWeekFinalStatuses(client, seasonYear);
 
     warningSummary =
       [...rejects.map((r) => r.reason), ...warnings]

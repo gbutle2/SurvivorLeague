@@ -88,6 +88,9 @@ describe("week lifecycle", () => {
     assert.equal(isStatusTransitionAllowed("upcoming", "open"), true);
     assert.equal(isStatusTransitionAllowed("open", "locked"), true);
     assert.equal(isStatusTransitionAllowed("upcoming", "locked"), true);
+    assert.equal(isStatusTransitionAllowed("upcoming", "final"), true);
+    assert.equal(isStatusTransitionAllowed("open", "final"), true);
+    assert.equal(isStatusTransitionAllowed("locked", "final"), true);
     assert.equal(isStatusTransitionAllowed("locked", "open"), false);
     assert.equal(isStatusTransitionAllowed("final", "open"), false);
     assert.equal(isStatusTransitionAllowed("open", "upcoming"), false);

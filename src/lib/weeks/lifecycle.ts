@@ -84,6 +84,14 @@ export function isStatusTransitionAllowed(
   if (from === "upcoming" && to === "locked") {
     return true;
   }
+  // Sync-owned reconciliation may mark a fully terminal week final from any
+  // non-final administrative status. Commissioner UI does not expose this.
+  if (
+    to === "final" &&
+    (from === "upcoming" || from === "open" || from === "locked")
+  ) {
+    return true;
+  }
   return false;
 }
 
