@@ -162,6 +162,7 @@ export type CreatePlayerResult = {
 export async function createPlayerAccount(input: {
   email: string;
   displayName: string;
+  temporaryPassword: string;
   /** Ignored — league comes from commissioner session. */
   leagueId?: string | null;
 }): Promise<CreatePlayerResult> {
@@ -170,6 +171,7 @@ export async function createPlayerAccount(input: {
   });
   const email = normalizeEmail(input.email);
   const displayName = normalizeDisplayName(input.displayName);
+  const temporaryPassword = input.temporaryPassword;
 
   if (!validateEmail(email)) {
     throw new MemberManagementError(
@@ -181,6 +183,12 @@ export async function createPlayerAccount(input: {
     throw new MemberManagementError(
       "invalid_display_name",
       "Display name must be 1–40 characters.",
+    );
+  }
+  if (!temporaryPasswordMeetsPolicy(temporaryPassword)) {
+    throw new MemberManagementError(
+      "invalid_password",
+      "Temporary password must be at least 20 characters and include uppercase, lowercase, a number, and a symbol.",
     );
   }
 
@@ -197,14 +205,6 @@ export async function createPlayerAccount(input: {
       );
     }
     throw error;
-  }
-
-  const temporaryPassword = generateTemporaryPassword();
-  if (!temporaryPasswordMeetsPolicy(temporaryPassword)) {
-    throw new MemberManagementError(
-      "unexpected",
-      "Could not generate a temporary password.",
-    );
   }
 
   let createdUser: User | null = null;

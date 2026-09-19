@@ -150,8 +150,8 @@ export function MembersManager({
       <section className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
         <h2 className="text-base font-semibold text-stone-900">Create player</h2>
         <p className="mt-1 text-sm text-stone-600">
-          Active members: {activeCount}. New accounts receive a one-time
-          temporary password.
+          Active members: {activeCount}. Choose a temporary password the player
+          will use once, then change on first sign-in.
         </p>
         <form action={createAction} className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1.5 text-sm font-medium text-stone-700">
@@ -173,6 +173,32 @@ export function MembersManager({
               className="h-11 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
             />
           </label>
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-stone-700">
+            Temporary password
+            <input
+              name="temporary_password"
+              type="password"
+              required
+              minLength={20}
+              autoComplete="new-password"
+              className="h-11 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
+            />
+          </label>
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-stone-700">
+            Confirm temporary password
+            <input
+              name="temporary_password_confirmation"
+              type="password"
+              required
+              minLength={20}
+              autoComplete="new-password"
+              className="h-11 rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/30"
+            />
+          </label>
+          <p className="text-xs leading-relaxed text-stone-500">
+            Must be at least 20 characters and include uppercase, lowercase, a
+            number, and a symbol. It is never stored in the database.
+          </p>
           <input type="hidden" name="league_id" value="ignore-me" />
           <input type="hidden" name="requester_id" value="ignore-me" />
           <input type="hidden" name="role" value="commissioner" />
