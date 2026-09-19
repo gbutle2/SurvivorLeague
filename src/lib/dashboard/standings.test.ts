@@ -209,6 +209,105 @@ describe("greatest-weeks survivor resolution", () => {
     assert.equal(decision.decided, false);
   });
 
+  it("does not award survivor bonus when every player is tied at zero weeks survived", () => {
+    const weeks = Array.from({ length: 18 }, (_, index) => ({
+      id: `w${index + 1}`,
+      weekNumber: index + 1,
+      status: (index === 0 ? "final" : "upcoming") as "final" | "upcoming",
+    }));
+    const six = [
+      ...players,
+      { userId: "d", displayName: "D" },
+      { userId: "e", displayName: "E" },
+      { userId: "f", displayName: "F" },
+    ];
+    const decision = resolveSurvivorDecision(six, weeks, []);
+    assert.equal(decision.decided, false);
+    assert.deepEqual(decision.winnerUserIds, []);
+    for (const player of six) {
+      assert.equal(decision.weeksSurvivedByUser.get(player.userId), 0);
+    }
+
+    const standings = buildRegularStandings(six, weeks, [], rules);
+    assert.equal(standings.length, 6);
+    for (const row of standings) {
+      assert.equal(row.pointsEarned, 0);
+      assert.ok(row.pointsEarned < 10);
+    }
+  });
+
+  it("does not settle an all-zero floor after everyone misses a final Week 1", () => {
+    const weeks = Array.from({ length: 18 }, (_, index) => ({
+      id: `w${index + 1}`,
+      weekNumber: index + 1,
+      status: (index === 0 ? "final" : "open") as "final" | "open",
+    }));
+    const six = [
+      ...players,
+      { userId: "d", displayName: "D" },
+      { userId: "e", displayName: "E" },
+      { userId: "f", displayName: "F" },
+    ];
+    // No pick rows on a final week count as misses → weeksSurvived 0 for all.
+    const decision = resolveSurvivorDecision(six, weeks, []);
+    assert.equal(decision.decided, false);
+    assert.deepEqual(decision.winnerUserIds, []);
+  });
+
+  it("after historical Week 1 results keeps survivor unsettled with 4 alive and 2 out", () => {
+    const weeks = Array.from({ length: 18 }, (_, index) => ({
+      id: `w${index + 1}`,
+      weekNumber: index + 1,
+      status: (index === 0 ? "final" : "upcoming") as "final" | "upcoming",
+    }));
+    const six = [
+      { userId: "geoff", displayName: "gbutle2" },
+      { userId: "chris", displayName: "Chris" },
+      { userId: "alex", displayName: "Alex" },
+      { userId: "adam", displayName: "Adumb" },
+      { userId: "mariah", displayName: "Mariah" },
+      { userId: "ethan", displayName: "Ethan" },
+    ];
+    const picks = [
+      { userId: "geoff", weekId: "w1", result: "loss" as const },
+      { userId: "chris", weekId: "w1", result: "win" as const },
+      { userId: "alex", weekId: "w1", result: "win" as const },
+      { userId: "adam", weekId: "w1", result: "win" as const },
+      { userId: "mariah", weekId: "w1", result: "loss" as const },
+      { userId: "ethan", weekId: "w1", result: "win" as const },
+    ];
+    const decision = resolveSurvivorDecision(six, weeks, picks);
+    assert.equal(decision.decided, false);
+    assert.deepEqual(decision.winnerUserIds, []);
+
+    const standings = buildRegularStandings(six, weeks, picks, rules);
+    const byId = Object.fromEntries(
+      standings.map((row) => [row.userId, row]),
+    );
+    assert.equal(byId.geoff?.pointsEarned, 0);
+    assert.equal(byId.mariah?.pointsEarned, 0);
+    assert.equal(byId.chris?.pointsEarned, 1);
+    assert.equal(byId.alex?.pointsEarned, 1);
+    assert.equal(byId.adam?.pointsEarned, 1);
+    assert.equal(byId.ethan?.pointsEarned, 1);
+    assert.deepEqual(
+      standings.map((row) => row.pointsEarned).sort((a, b) => a - b),
+      [0, 0, 1, 1, 1, 1],
+    );
+    assert.equal(standings.filter((row) => row.survivorAlive).length, 4);
+    assert.equal(byId.geoff?.survivorAlive, false);
+    assert.equal(byId.mariah?.survivorAlive, false);
+    assert.equal(byId.chris?.survivorAlive, true);
+    assert.equal(byId.chris?.maxPossible, 60);
+    assert.equal(byId.alex?.maxPossible, 60);
+    assert.equal(byId.adam?.maxPossible, 60);
+    assert.equal(byId.ethan?.maxPossible, 60);
+    assert.equal(byId.geoff?.maxPossible, 49);
+    assert.equal(byId.mariah?.maxPossible, 49);
+    assert.equal(byId.chris?.longestStreak, 1);
+    assert.equal(byId.geoff?.longestStreak, 0);
+  });
+
   it("lets eliminated players keep earning weekly points", () => {
     const weeks = [
       { id: "w1", weekNumber: 1, status: "final" as const },
@@ -338,7 +437,7 @@ describe("league dashboard standings", () => {
     assert.equal(standings[1]?.missed, 1);
   });
 
-  it("keeps unearned record/streak bonuses out of earned until the season is fully scored", () => {
+  it("keeps unearned record/streak/survivor bonuses out of earned until settled", () => {
     const [standing] = buildRegularStandings(
       [players[0]!],
       weeks,
@@ -348,8 +447,10 @@ describe("league dashboard standings", () => {
       ],
       rules,
     );
-    assert.equal(standing?.pointsEarned, 2 + 10);
-    assert.equal(standing?.maxPossible, 2 + 10 + 1 + 4 + 4 + 24);
+    // Week 3 is still open, so the opening run can still extend — survivor,
+    // best-record, and longest-streak stay out of earned points.
+    assert.equal(standing?.pointsEarned, 2);
+    assert.equal(standing?.maxPossible, 2 + 1 + 4 + 4 + 10 + 24);
   });
 
   it("gives full bonuses to every tied category leader", () => {
@@ -465,7 +566,9 @@ describe("18-week regular-season competition", () => {
 
     const before = buildRegularStandings([players[0]!], weeksOpen18, picks, rules)[0];
     assert.equal(before?.wins, 17);
-    assert.equal(before?.maxPossible, before!.pointsEarned + 1 + 4 + 4 + 24);
+    assert.equal(before?.pointsEarned, 17);
+    // Survivor and record/streak bonuses remain attainable until Week 18 settles.
+    assert.equal(before?.maxPossible, 17 + 1 + 4 + 4 + 10 + 24);
 
     const after = buildRegularStandings(
       [players[0]!],

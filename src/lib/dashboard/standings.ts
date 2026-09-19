@@ -153,13 +153,24 @@ export function resolveSurvivorDecision(
     runs.map((run) => [run.userId, run.weeksSurvived]),
   );
   const maxFloor = Math.max(0, ...runs.map((run) => run.weeksSurvived));
-  const contenders = runs.filter((run) => run.ceiling >= maxFloor);
-  const allComplete = runs.every((run) => run.complete);
-  const contendersLockedAtMax = contenders.every(
-    (run) => run.weeksSurvived === maxFloor,
-  );
 
-  if (!allComplete && !contendersLockedAtMax) {
+  // Zero survival weeks is never an earned survivor result (missing data,
+  // pending openers, or everyone already eliminated at week 1).
+  if (maxFloor <= 0) {
+    return {
+      decided: false,
+      decidedAtWeekNumber: null,
+      winnerUserIds: [],
+      weeksSurvivedByUser,
+    };
+  }
+
+  // Do not settle while any contender can still extend an opening run that
+  // reaches the current greatest floor (pending picks or remaining weeks).
+  const canStillChange = runs.some(
+    (run) => !run.complete && run.ceiling >= maxFloor,
+  );
+  if (canStillChange) {
     return {
       decided: false,
       decidedAtWeekNumber: null,

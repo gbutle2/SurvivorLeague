@@ -125,7 +125,12 @@ export function LeagueDashboard({
             </>
           )}
           <p className="border-t border-stone-100 px-3 py-2 text-xs leading-relaxed text-stone-500">
-            Earned includes only graded pick points, awarded playoff points, and season bonuses after the regular season is fully scored. Max possible is that player&apos;s attainable ceiling from remaining regular picks, still-reachable bonuses, and remaining playoff-survivor points — not a shared league-wide theoretical maximum.
+            League scoring maximum is 60 points. Earned includes graded pick
+            points, awarded playoff points, and season bonuses once those
+            categories are settled. Max possible is each player&apos;s own
+            attainable ceiling from remaining regular picks, still-reachable
+            bonuses, and remaining playoff-survivor points — not a fixed 60 for
+            every player.
           </p>
         </div>
       </section>
