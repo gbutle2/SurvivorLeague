@@ -371,17 +371,17 @@ SELECT throws_ok(
   'player cannot set results or points'
 );
 
--- 11) Commissioner can set results
+-- 11) Commissioner overrides go through commissioner_override_pick (not direct UPDATE)
 SELECT tests.authenticate_as((SELECT commish FROM test_ids));
 SELECT lives_ok(
   format(
-    'UPDATE public.picks SET result = %L, result_source = %L, result_override_reason = %L WHERE id = %L',
-    'win',
-    'commissioner',
-    'Phase1 commissioner override',
-    (SELECT locked_pick_id FROM test_ids)
+    'SELECT public.commissioner_override_pick(%L, %L, (SELECT team_id FROM public.picks WHERE id = %L), %L)',
+    (SELECT player1 FROM test_ids),
+    (SELECT week_locked FROM test_ids),
+    (SELECT locked_pick_id FROM test_ids),
+    'Phase1 commissioner override'
   ),
-  'commissioner can set results'
+  'commissioner can override picks via RPC'
 );
 
 -- 12) Cross-league users cannot read
@@ -486,55 +486,45 @@ SELECT throws_ok(
   'player-commish dual role cannot move League A pick to League B'
 );
 
--- 20) id is immutable (including for commissioner)
+-- 20–23) Direct commissioner pick UPDATEs are blocked by RLS (no update policy).
+-- Identity immutability remains enforced by triggers for any path that can touch a row.
 SELECT tests.authenticate_as((SELECT commish FROM test_ids));
-SELECT throws_ok(
-  format(
-    'UPDATE public.picks SET id = %L WHERE id = %L',
-    '99999999-9999-9999-9999-999999999999',
-    (SELECT locked_pick_id FROM test_ids)
-  ),
-  '42501',
-  NULL,
+UPDATE public.picks
+SET id = '99999999-9999-9999-9999-999999999999'
+WHERE id = (SELECT locked_pick_id FROM test_ids);
+SELECT is(
+  (SELECT count(*)::integer FROM public.picks WHERE id = (SELECT locked_pick_id FROM test_ids)),
+  1,
   'id is immutable'
 );
 
--- 21) user_id is immutable (commissioner cannot reassign)
-SELECT tests.authenticate_as((SELECT commish FROM test_ids));
-SELECT throws_ok(
-  format(
-    'UPDATE public.picks SET user_id = %L WHERE id = %L',
-    (SELECT player2 FROM test_ids),
-    (SELECT locked_pick_id FROM test_ids)
-  ),
-  '42501',
-  NULL,
+UPDATE public.picks
+SET user_id = (SELECT player2 FROM test_ids)
+WHERE id = (SELECT locked_pick_id FROM test_ids);
+SELECT is(
+  (SELECT user_id FROM public.picks WHERE id = (SELECT locked_pick_id FROM test_ids)),
+  (SELECT player1 FROM test_ids),
   'user_id is immutable; commissioner cannot reassign pick'
 );
 
--- 22) week_id is immutable
-SELECT tests.authenticate_as((SELECT commish FROM test_ids));
-SELECT throws_ok(
-  format(
-    'UPDATE public.picks SET week_id = %L WHERE id = %L',
-    (SELECT week2 FROM test_ids),
-    (SELECT locked_pick_id FROM test_ids)
-  ),
-  '42501',
-  NULL,
+UPDATE public.picks
+SET week_id = (SELECT week2 FROM test_ids)
+WHERE id = (SELECT locked_pick_id FROM test_ids);
+SELECT is(
+  (SELECT week_id FROM public.picks WHERE id = (SELECT locked_pick_id FROM test_ids)),
+  (SELECT week_locked FROM test_ids),
   'week_id is immutable'
 );
 
--- 23) submitted_at is immutable
-SELECT tests.authenticate_as((SELECT commish FROM test_ids));
-SELECT throws_ok(
-  format(
-    'UPDATE public.picks SET submitted_at = %L WHERE id = %L',
-    '2020-01-01 00:00:00+00',
-    (SELECT locked_pick_id FROM test_ids)
+UPDATE public.picks
+SET submitted_at = '2020-01-01 00:00:00+00'
+WHERE id = (SELECT locked_pick_id FROM test_ids);
+SELECT ok(
+  (
+    SELECT submitted_at > timestamptz '2021-01-01'
+    FROM public.picks
+    WHERE id = (SELECT locked_pick_id FROM test_ids)
   ),
-  '42501',
-  NULL,
   'submitted_at is immutable'
 );
 
@@ -564,15 +554,15 @@ SELECT ok(
   'player cannot spoof submitted_at or updated_at on insert'
 );
 
--- 25) Commissioner can change result but cannot reassign (result ok path)
+-- 25) Commissioner overrides results via commissioner_override_pick only
 SELECT tests.authenticate_as((SELECT commish FROM test_ids));
 SELECT lives_ok(
   format(
-    'UPDATE public.picks SET result = %L, result_source = %L, result_override_reason = %L WHERE id = %L',
-    'loss',
-    'commissioner',
-    'Phase1 commissioner result change',
-    (SELECT locked_pick_id FROM test_ids)
+    'SELECT public.commissioner_override_pick(%L, %L, (SELECT team_id FROM public.picks WHERE id = %L), %L)',
+    (SELECT player1 FROM test_ids),
+    (SELECT week_locked FROM test_ids),
+    (SELECT locked_pick_id FROM test_ids),
+    'Phase1 commissioner result change'
   ),
   'commissioner can change a result'
 );
