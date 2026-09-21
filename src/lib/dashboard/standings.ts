@@ -63,7 +63,8 @@ export type SurvivorDecision = {
 /**
  * Prefer NFL game terminal status when schedule signals exist.
  * Stored week/round status is the fallback when games are not synced yet.
- * Pending pick results are never treated as misses by the standings builder.
+ * Graded pick results (win/loss/tie/miss) count in standings immediately;
+ * pending results and missing picks on non-final weeks never count as misses.
  */
 export function resolveStandingsWeekStatus(
   weekStatus: DashboardWeek["status"],
@@ -208,35 +209,38 @@ function survivorRunFor(
   for (let index = 0; index < orderedWeeks.length; index += 1) {
     const week = orderedWeeks[index]!;
     const remainingIncludingCurrent = orderedWeeks.length - index;
-
-    if (week.status !== "final") {
-      return {
-        userId,
-        weeksSurvived,
-        ceiling: weeksSurvived + remainingIncludingCurrent,
-        complete: false,
-        decidedAtWeekNumber,
-      };
-    }
-
     const result = resultFor(picks, userId, week.id);
-    if (result === "pending") {
-      return {
-        userId,
-        weeksSurvived,
-        ceiling: weeksSurvived + remainingIncludingCurrent,
-        complete: false,
-        decidedAtWeekNumber,
-      };
-    }
 
+    // Graded wins count even while other games that week are still open.
     if (result === "win") {
       weeksSurvived += 1;
       decidedAtWeekNumber = week.weekNumber;
       continue;
     }
 
-    // loss, tie, or miss ends the survivor run; locked weeksSurvived stands.
+    // Graded losses/ties/misses end the run immediately.
+    if (result === "loss" || result === "tie" || result === "miss") {
+      return {
+        userId,
+        weeksSurvived,
+        ceiling: weeksSurvived,
+        complete: true,
+        decidedAtWeekNumber: week.weekNumber,
+      };
+    }
+
+    // Pending picks, or no pick before the week is fully final, never eliminate.
+    if (result === "pending" || week.status !== "final") {
+      return {
+        userId,
+        weeksSurvived,
+        ceiling: weeksSurvived + remainingIncludingCurrent,
+        complete: false,
+        decidedAtWeekNumber,
+      };
+    }
+
+    // Final week with no pick row is a miss.
     return {
       userId,
       weeksSurvived,
@@ -256,8 +260,9 @@ function survivorRunFor(
 }
 
 /**
- * A completed playoff round with no pick row is a miss and eliminates the player.
- * Pending results do not eliminate. Non-terminal rounds do not count as misses.
+ * Graded playoff losses/ties/misses eliminate immediately.
+ * Pending results do not eliminate. A completed round with no pick is a miss.
+ * Missing picks on non-final rounds do not eliminate yet.
  */
 export function isPlayoffSurvivorAlive(
   userId: string,
@@ -267,18 +272,17 @@ export function isPlayoffSurvivorAlive(
   const orderedRounds = [...rounds].sort((a, b) => a.roundNumber - b.roundNumber);
 
   for (const round of orderedRounds) {
-    if (round.status !== "final") {
+    const pick = playoffPickFor(picks, userId, round.id);
+    if (pick?.result === "win") {
       continue;
     }
-
-    const pick = playoffPickFor(picks, userId, round.id);
-    if (!pick) {
+    if (pick && pick.result !== "pending") {
       return false;
     }
-    if (pick.result === "pending") {
+    if (pick?.result === "pending") {
       return true;
     }
-    if (pick.result !== "win") {
+    if (round.status === "final") {
       return false;
     }
   }
@@ -326,27 +330,32 @@ function tallyPlayer(
   let unresolvedRegularWeeks = 0;
 
   for (const week of orderedWeeks) {
-    if (week.status !== "final") {
-      unresolvedRegularWeeks += 1;
-      continue;
-    }
-
     const result = resultFor(picks, player.userId, week.id);
-    if (result === "pending") {
-      unresolvedRegularWeeks += 1;
-      continue;
-    }
 
     if (result === "win") {
       wins += 1;
       currentStreak += 1;
       longestStreak = Math.max(longestStreak, currentStreak);
-    } else {
+      continue;
+    }
+
+    if (result === "loss" || result === "tie" || result === "miss") {
       currentStreak = 0;
       if (result === "loss") losses += 1;
       else if (result === "tie") ties += 1;
       else missed += 1;
+      continue;
     }
+
+    // Pending, or no pick before the week is fully final, stays unresolved.
+    if (result === "pending" || week.status !== "final") {
+      unresolvedRegularWeeks += 1;
+      continue;
+    }
+
+    // Final week with no pick row is a miss.
+    currentStreak = 0;
+    missed += 1;
   }
 
   return {

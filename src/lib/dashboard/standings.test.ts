@@ -333,6 +333,57 @@ describe("greatest-weeks survivor resolution", () => {
     assert.equal(b?.pointsEarned, 2);
     assert.equal(b?.survivorAlive, false);
   });
+
+  it("counts graded pick results before the week is fully final", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "locked" as const },
+      { id: "w3", weekNumber: 3, status: "upcoming" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w2", result: "loss" as const },
+      { userId: "c", weekId: "w1", result: "win" as const },
+      { userId: "c", weekId: "w2", result: "pending" as const },
+    ];
+    const standings = buildRegularStandings(
+      [players[0]!, players[1]!, players[2]!],
+      weeks,
+      picks,
+      rules,
+    );
+    const byId = Object.fromEntries(
+      standings.map((row) => [row.userId, row]),
+    );
+
+    assert.equal(byId.a?.wins, 2);
+    assert.equal(byId.a?.pointsEarned, 2);
+    assert.equal(byId.a?.survivorAlive, true);
+    assert.equal(byId.a?.longestStreak, 2);
+
+    assert.equal(byId.b?.wins, 1);
+    assert.equal(byId.b?.losses, 1);
+    assert.equal(byId.b?.pointsEarned, 1);
+    assert.equal(byId.b?.survivorAlive, false);
+
+    assert.equal(byId.c?.wins, 1);
+    assert.equal(byId.c?.pointsEarned, 1);
+    assert.equal(byId.c?.survivorAlive, true);
+    // Pending current week still counts toward max possible.
+    assert.equal(byId.c?.maxPossible, 1 + 2 + 4 + 4 + 10 + 24);
+
+    const decision = resolveSurvivorDecision(
+      [players[0]!, players[1]!, players[2]!],
+      weeks,
+      picks,
+    );
+    assert.equal(decision.decided, false);
+    assert.equal(decision.weeksSurvivedByUser.get("a"), 2);
+    assert.equal(decision.weeksSurvivedByUser.get("b"), 1);
+    assert.equal(decision.weeksSurvivedByUser.get("c"), 1);
+  });
 });
 
 describe("playoff survivor miss and remaining points", () => {
@@ -386,6 +437,24 @@ describe("playoff survivor miss and remaining points", () => {
         { userId: "a", playoffRoundId: "r1", result: "tie", pointsAwarded: 0 },
       ]),
       false,
+    );
+  });
+
+  it("eliminates on a graded playoff loss before the round is fully final", () => {
+    const openRound: DashboardPlayoffRound[] = [
+      { id: "r1", roundNumber: 1, points: 2, status: "locked" },
+    ];
+    assert.equal(
+      isPlayoffSurvivorAlive("a", openRound, [
+        { userId: "a", playoffRoundId: "r1", result: "loss", pointsAwarded: 0 },
+      ]),
+      false,
+    );
+    assert.equal(
+      isPlayoffSurvivorAlive("a", openRound, [
+        { userId: "a", playoffRoundId: "r1", result: "win", pointsAwarded: 2 },
+      ]),
+      true,
     );
   });
 
