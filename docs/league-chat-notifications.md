@@ -1,10 +1,7 @@
 # League chat, DMs, activity, and notifications
 
 Feature branch: `feature/league-chat-notifications`  
-Migration:
-- `supabase/migrations/20260922120000_league_chat_notifications.sql`
-- `supabase/migrations/20260922130000_league_chat_idempotency_and_reveal.sql`  
-(created, **not** applied to remote)
+Migration: `supabase/migrations/20260922120000_league_chat_notifications.sql` (created, **not** applied to remote)
 
 ## Data model
 

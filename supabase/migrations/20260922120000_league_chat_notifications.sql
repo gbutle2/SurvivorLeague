@@ -104,26 +104,37 @@ CREATE TABLE public.messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   edited_at TIMESTAMPTZ,
   deleted_at TIMESTAMPTZ,
-  idempotency_key TEXT,
-  CONSTRAINT messages_user_has_author CHECK (
-    kind <> 'user' OR author_user_id IS NOT NULL
-  ),
-  CONSTRAINT messages_system_no_author_spoof CHECK (
-    kind <> 'system' OR author_user_id IS NULL
-  ),
+  client_idempotency_key TEXT,
+  system_idempotency_key TEXT,
   CONSTRAINT messages_body_length CHECK (
     body IS NULL OR char_length(body) <= 2000
   ),
-  CONSTRAINT messages_user_body_required CHECK (
-    kind <> 'user'
-    OR deleted_at IS NOT NULL
-    OR (body IS NOT NULL AND length(trim(body)) > 0)
+  CONSTRAINT messages_kind_columns_check CHECK (
+    (
+      kind = 'user'
+      AND author_user_id IS NOT NULL
+      AND system_idempotency_key IS NULL
+      AND league_event_id IS NULL
+      AND (
+        deleted_at IS NOT NULL
+        OR (body IS NOT NULL AND length(trim(body)) > 0)
+      )
+    )
+    OR (
+      kind = 'system'
+      AND author_user_id IS NULL
+      AND client_idempotency_key IS NULL
+    )
   )
 );
 
-CREATE UNIQUE INDEX messages_idempotency_key_uidx
-  ON public.messages (idempotency_key)
-  WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX messages_client_idempotency_uidx
+  ON public.messages (conversation_id, author_user_id, client_idempotency_key)
+  WHERE kind = 'user' AND client_idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX messages_system_idempotency_uidx
+  ON public.messages (system_idempotency_key)
+  WHERE kind = 'system' AND system_idempotency_key IS NOT NULL;
 
 CREATE INDEX messages_conversation_created_idx
   ON public.messages (conversation_id, created_at);
@@ -373,8 +384,25 @@ AS $$
 DECLARE
   v_event_id UUID;
   v_conversation_id UUID;
+  v_public_payload JSONB := coalesce(p_payload, '{}'::jsonb);
+  v_sensitive JSONB := coalesce(p_sensitive_payload, '{}'::jsonb);
+  v_revealed BOOLEAN := coalesce(p_is_revealed, false);
 BEGIN
-  -- Not granted to authenticated; only triggers / service-role callers invoke this.
+  -- When already revealed, public payload must carry permitted team ids immediately.
+  IF v_revealed THEN
+    v_public_payload := v_public_payload || jsonb_strip_nulls(
+      jsonb_build_object(
+        'team_id', nullif(v_sensitive ->> 'team_id', ''),
+        'previous_team_id', nullif(v_sensitive ->> 'previous_team_id', '')
+      )
+    );
+  ELSE
+    -- Defense in depth: never leave team ids in the public payload while hidden.
+    v_public_payload := v_public_payload - 'team_id' - 'previous_team_id'
+      - 'team_abbreviation' - 'previous_team_abbreviation'
+      - 'team_name' - 'previous_team_name';
+  END IF;
+
   INSERT INTO public.league_events (
     league_id, season_id, week_id, event_type,
     actor_user_id, affected_user_id,
@@ -388,9 +416,9 @@ BEGIN
     CASE WHEN p_actor_user_id IS NULL THEN NULL ELSE public.profile_display_name(p_actor_user_id) END,
     CASE WHEN p_affected_user_id IS NULL THEN NULL ELSE public.profile_display_name(p_affected_user_id) END,
     p_domain_table, p_domain_record_id,
-    coalesce(p_payload, '{}'::jsonb),
-    coalesce(p_sensitive_payload, '{}'::jsonb),
-    coalesce(p_is_revealed, false),
+    v_public_payload,
+    v_sensitive,
+    v_revealed,
     p_idempotency_key
   )
   ON CONFLICT (idempotency_key) DO NOTHING
@@ -407,13 +435,15 @@ BEGIN
     v_conversation_id := public.ensure_league_conversation(p_league_id);
     INSERT INTO public.messages (
       conversation_id, league_id, kind, author_user_id, author_display_name,
-      body, league_event_id, idempotency_key
+      body, league_event_id, system_idempotency_key
     )
     VALUES (
       v_conversation_id, p_league_id, 'system', NULL, NULL,
       NULL, v_event_id, 'system_msg:' || p_idempotency_key
     )
-    ON CONFLICT (idempotency_key) WHERE (idempotency_key IS NOT NULL) DO NOTHING;
+    ON CONFLICT (system_idempotency_key)
+      WHERE (kind = 'system' AND system_idempotency_key IS NOT NULL)
+      DO NOTHING;
   END IF;
 
   IF p_notify_user_id IS NOT NULL
@@ -618,7 +648,52 @@ CREATE TRIGGER picks_record_league_events
   FOR EACH ROW
   EXECUTE FUNCTION public.trg_picks_record_league_events();
 
--- Reveal sensitive presentation when kickoff makes the pick public.
+-- Idempotent reveal of eligible pick events (same rule as pick visibility).
+-- Wall-clock kickoff alone does not fire triggers; NFL sync also calls this.
+CREATE OR REPLACE FUNCTION public.reveal_eligible_pick_events()
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_count INTEGER := 0;
+BEGIN
+  WITH eligible AS (
+    SELECT le.id
+    FROM public.league_events le
+    WHERE le.is_revealed = false
+      AND le.domain_table = 'picks'
+      AND le.domain_record_id IS NOT NULL
+      AND le.event_type IN (
+        'pick_submitted', 'pick_updated', 'commissioner_pick_changed'
+      )
+      AND public.pick_is_revealed_to_peers(le.domain_record_id)
+  ),
+  updated AS (
+    UPDATE public.league_events le
+    SET
+      is_revealed = true,
+      payload = le.payload || jsonb_strip_nulls(
+        jsonb_build_object(
+          'team_id', nullif(le.sensitive_payload ->> 'team_id', ''),
+          'previous_team_id', nullif(le.sensitive_payload ->> 'previous_team_id', '')
+        )
+      )
+    FROM eligible e
+    WHERE le.id = e.id
+    RETURNING le.id
+  )
+  SELECT count(*)::integer INTO v_count FROM updated;
+
+  RETURN coalesce(v_count, 0);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.reveal_eligible_pick_events() FROM PUBLIC;
+-- Invoked by game triggers and the NFL sync Node path (service/DB owner).
+-- Not granted to authenticated clients.
+
 CREATE OR REPLACE FUNCTION public.trg_games_reveal_pick_events()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -626,30 +701,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  IF TG_OP = 'UPDATE'
-     AND OLD.scheduled_kickoff_at IS DISTINCT FROM NEW.scheduled_kickoff_at THEN
-    RETURN NEW;
-  END IF;
-
-  IF NEW.scheduled_kickoff_at <= now() THEN
-    UPDATE public.league_events le
-    SET
-      is_revealed = true,
-      payload = le.payload
-        || jsonb_build_object(
-          'team_id', le.sensitive_payload ->> 'team_id',
-          'previous_team_id', le.sensitive_payload ->> 'previous_team_id'
-        )
-    WHERE le.domain_table = 'picks'
-      AND le.domain_record_id IN (
-        SELECT p.id FROM public.picks p WHERE p.game_id = NEW.id
-      )
-      AND le.is_revealed = false
-      AND le.event_type IN (
-        'pick_submitted', 'pick_updated', 'commissioner_pick_changed'
-      );
-  END IF;
-
+  PERFORM public.reveal_eligible_pick_events();
   RETURN NEW;
 END;
 $$;
@@ -820,6 +872,7 @@ DECLARE
   v_row public.messages;
   v_league_id UUID;
   v_body TEXT := trim(coalesce(p_body, ''));
+  v_key TEXT := nullif(trim(coalesce(p_idempotency_key, '')), '');
   v_other UUID;
 BEGIN
   IF auth.uid() IS NULL THEN
@@ -832,27 +885,43 @@ BEGIN
     RAISE EXCEPTION 'Not a conversation participant' USING ERRCODE = '42501';
   END IF;
 
+  -- Clients may not occupy the system-message namespace.
+  IF v_key IS NOT NULL AND lower(v_key) LIKE 'system_msg:%' THEN
+    RAISE EXCEPTION 'Invalid idempotency key' USING ERRCODE = '22023';
+  END IF;
+
   SELECT c.league_id INTO v_league_id
   FROM public.conversations c
   WHERE c.id = p_conversation_id;
 
   INSERT INTO public.messages (
     conversation_id, league_id, kind, author_user_id, author_display_name,
-    body, idempotency_key
+    body, client_idempotency_key
   )
   VALUES (
     p_conversation_id, v_league_id, 'user', auth.uid(),
     public.profile_display_name(auth.uid()),
-    v_body, nullif(trim(coalesce(p_idempotency_key, '')), '')
+    v_body, v_key
   )
-  ON CONFLICT (idempotency_key) WHERE (idempotency_key IS NOT NULL) DO NOTHING
+  ON CONFLICT (conversation_id, author_user_id, client_idempotency_key)
+    WHERE (kind = 'user' AND client_idempotency_key IS NOT NULL)
+    DO NOTHING
   RETURNING * INTO v_row;
 
-  IF v_row.id IS NULL AND p_idempotency_key IS NOT NULL THEN
-    SELECT * INTO v_row FROM public.messages WHERE idempotency_key = p_idempotency_key;
+  IF v_row.id IS NULL AND v_key IS NOT NULL THEN
+    -- Only return a prior message owned by this sender in this conversation.
+    SELECT m.* INTO v_row
+    FROM public.messages m
+    WHERE m.conversation_id = p_conversation_id
+      AND m.author_user_id = auth.uid()
+      AND m.kind = 'user'
+      AND m.client_idempotency_key = v_key;
   END IF;
 
-  -- DM notification for the other participant
+  IF v_row.id IS NULL THEN
+    RAISE EXCEPTION 'Message send failed' USING ERRCODE = '23505';
+  END IF;
+
   SELECT CASE
     WHEN c.type = 'direct' AND c.dm_user_low = auth.uid() THEN c.dm_user_high
     WHEN c.type = 'direct' AND c.dm_user_high = auth.uid() THEN c.dm_user_low
@@ -861,7 +930,7 @@ BEGIN
   FROM public.conversations c
   WHERE c.id = p_conversation_id;
 
-  IF v_other IS NOT NULL AND v_row.id IS NOT NULL THEN
+  IF v_other IS NOT NULL THEN
     INSERT INTO public.notifications (
       recipient_user_id, league_id, notification_type,
       title, body, payload, link_path, idempotency_key
@@ -1094,7 +1163,11 @@ REVOKE ALL ON TABLE public.conversations FROM PUBLIC;
 GRANT SELECT ON TABLE public.conversations TO authenticated;
 
 REVOKE ALL ON TABLE public.messages FROM PUBLIC;
-GRANT SELECT ON TABLE public.messages TO authenticated;
+GRANT SELECT (
+  id, conversation_id, league_id, kind, author_user_id, author_display_name,
+  body, league_event_id, created_at, edited_at, deleted_at,
+  client_idempotency_key, system_idempotency_key
+) ON public.messages TO authenticated;
 
 REVOKE ALL ON TABLE public.conversation_read_states FROM PUBLIC;
 GRANT SELECT ON TABLE public.conversation_read_states TO authenticated;
