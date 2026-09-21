@@ -1,7 +1,13 @@
 # League chat, DMs, activity, and notifications
 
 Feature branch: `feature/league-chat-notifications`  
-Migration: `supabase/migrations/20260922120000_league_chat_notifications.sql` (created, **not** applied to remote)
+
+Migrations:
+
+- `supabase/migrations/20260922120000_league_chat_notifications.sql` — schema, RLS, RPCs, triggers
+- `supabase/migrations/20260922140000_lock_down_chat_function_execute.sql` — revoke client EXECUTE on internal helpers; keep authenticated-only member RPCs / RLS helper
+
+This project’s Supabase defaults grant new function EXECUTE to `anon` and `authenticated` directly, so lockdowns must revoke those roles explicitly (not only `PUBLIC`).
 
 ## Data model
 
