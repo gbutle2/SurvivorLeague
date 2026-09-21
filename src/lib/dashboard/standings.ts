@@ -63,7 +63,7 @@ export type SurvivorDecision = {
 /**
  * Prefer NFL game terminal status when schedule signals exist.
  * Stored week/round status is the fallback when games are not synced yet.
- * Graded pick results (win/loss/tie/miss) count in standings immediately;
+ * Graded pick results (win/loss/tie) count in standings immediately;
  * pending results and missing picks on non-final weeks never count as misses.
  */
 export function resolveStandingsWeekStatus(
@@ -218,8 +218,8 @@ function survivorRunFor(
       continue;
     }
 
-    // Graded losses/ties/misses end the run immediately.
-    if (result === "loss" || result === "tie" || result === "miss") {
+    // Graded losses/ties end the run immediately.
+    if (result === "loss" || result === "tie") {
       return {
         userId,
         weeksSurvived,
@@ -260,7 +260,7 @@ function survivorRunFor(
 }
 
 /**
- * Graded playoff losses/ties/misses eliminate immediately.
+ * Graded playoff losses/ties eliminate immediately.
  * Pending results do not eliminate. A completed round with no pick is a miss.
  * Missing picks on non-final rounds do not eliminate yet.
  */
@@ -339,11 +339,10 @@ function tallyPlayer(
       continue;
     }
 
-    if (result === "loss" || result === "tie" || result === "miss") {
+    if (result === "loss" || result === "tie") {
       currentStreak = 0;
       if (result === "loss") losses += 1;
-      else if (result === "tie") ties += 1;
-      else missed += 1;
+      else ties += 1;
       continue;
     }
 
