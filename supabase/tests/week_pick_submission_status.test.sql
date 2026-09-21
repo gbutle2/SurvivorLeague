@@ -56,7 +56,7 @@ GRANT EXECUTE ON FUNCTION tests.clear_auth() TO anon;
 GRANT EXECUTE ON FUNCTION tests.set_anon() TO authenticated;
 GRANT EXECUTE ON FUNCTION tests.set_anon() TO anon;
 
-SELECT plan(24);
+SELECT plan(33);
 SELECT tests.clear_auth();
 
 -- Privilege matrix
@@ -317,10 +317,12 @@ SELECT throws_ok(
 SELECT tests.clear_auth();
 
 -- ---------------------------------------------------------------------------
--- Commissioner override provenance (current pick, not result_source)
+-- Commissioner override provenance (mutation stamp, not team/game alone)
 -- ---------------------------------------------------------------------------
 
 SELECT tests.authenticate_as((SELECT p2 FROM sub_ids));
+
+-- 1) Commissioner overrides to Team A (BUF) → flag true
 SELECT ok(
   (
     SELECT (public.commissioner_override_pick(
@@ -352,10 +354,10 @@ SELECT is(
     WHERE user_id = (SELECT p3 FROM sub_ids)
   ),
   true,
-  'current commissioner-overridden pick is flagged'
+  'commissioner override to Team A flags currently_commissioner_overridden'
 );
 
--- Second override updates to latest team
+-- 5) Multiple commissioner overrides → latest mutation wins
 SELECT ok(
   (
     SELECT (public.commissioner_override_pick(
@@ -389,8 +391,25 @@ SELECT is(
   'latest override team is current pick'
 );
 
--- Player legally changes after override → clears indicator
-SELECT tests.clear_auth();
+SELECT is(
+  (
+    SELECT p.last_commissioner_override_audit_id
+    FROM public.picks p
+    WHERE p.user_id = (SELECT p3 FROM sub_ids)
+      AND p.week_id = (SELECT week_a FROM sub_ids)
+  ),
+  (
+    SELECT a.id
+    FROM public.commissioner_pick_override_audits a
+    WHERE a.week_id = (SELECT week_a FROM sub_ids)
+      AND a.target_user_id = (SELECT p3 FROM sub_ids)
+    ORDER BY a.overridden_at DESC, a.audit_seq DESC
+    LIMIT 1
+  ),
+  'pick provenance stamp points at latest override by (overridden_at, audit_seq)'
+);
+
+-- 2) Player changes to Team B (PHI) → flag false
 SELECT tests.authenticate_as((SELECT p3 FROM sub_ids));
 SELECT lives_ok(
   format(
@@ -409,10 +428,109 @@ SELECT is(
     WHERE user_id = (SELECT p3 FROM sub_ids)
   ),
   false,
-  'player mutation clears commissioner override indicator'
+  'player change to Team B clears commissioner override indicator'
 );
 
--- No audit entry → false
+-- 3) Player changes back to Team A (DET, last override team) → flag remains false
+SELECT lives_ok(
+  format(
+    'UPDATE public.picks SET team_id = %L WHERE week_id = %L AND user_id = %L',
+    (SELECT team_det FROM sub_ids),
+    (SELECT week_a FROM sub_ids),
+    (SELECT p3 FROM sub_ids)
+  ),
+  'player can change back to the previously overridden team'
+);
+
+SELECT is(
+  (
+    SELECT currently_commissioner_overridden
+    FROM public.week_pick_submission_status((SELECT week_a FROM sub_ids))
+    WHERE user_id = (SELECT p3 FROM sub_ids)
+  ),
+  false,
+  'changing back to Team A does not restore commissioner override flag'
+);
+
+SELECT tests.clear_auth();
+SELECT is(
+  (
+    SELECT last_commissioner_override_audit_id IS NULL
+    FROM public.picks
+    WHERE user_id = (SELECT p3 FROM sub_ids)
+      AND week_id = (SELECT week_a FROM sub_ids)
+  ),
+  true,
+  'player mutations leave last_commissioner_override_audit_id cleared'
+);
+
+-- 4) Commissioner overrides again to Team A → flag true
+SELECT tests.authenticate_as((SELECT p2 FROM sub_ids));
+SELECT ok(
+  (
+    SELECT (public.commissioner_override_pick(
+      (SELECT p3 FROM sub_ids),
+      (SELECT week_a FROM sub_ids),
+      (SELECT team_det FROM sub_ids),
+      'Re-override after player edits'
+    )->>'result') = 'pending'
+  ),
+  'commissioner can override again after player edits'
+);
+
+SELECT is(
+  (
+    SELECT currently_commissioner_overridden
+    FROM public.week_pick_submission_status((SELECT week_a FROM sub_ids))
+    WHERE user_id = (SELECT p3 FROM sub_ids)
+  ),
+  true,
+  'new commissioner override restores currently_commissioner_overridden'
+);
+
+-- 6/7) Equal timestamps resolve via audit_seq; no ctid in status RPC
+SELECT tests.clear_auth();
+SELECT ok(
+  position(
+    'ctid' IN lower(
+      pg_get_functiondef('public.week_pick_submission_status(uuid)'::regprocedure)
+    )
+  ) = 0,
+  'week_pick_submission_status does not use ctid'
+);
+
+SELECT ok(
+  (
+    SELECT count(DISTINCT audit_seq) = count(*)
+    FROM public.commissioner_pick_override_audits
+    WHERE week_id = (SELECT week_a FROM sub_ids)
+      AND target_user_id = (SELECT p3 FROM sub_ids)
+  ),
+  'audit_seq uniquely orders override audits even with equal overridden_at'
+);
+
+SELECT is(
+  (
+    SELECT a.id
+    FROM public.commissioner_pick_override_audits a
+    WHERE a.week_id = (SELECT week_a FROM sub_ids)
+      AND a.target_user_id = (SELECT p3 FROM sub_ids)
+    ORDER BY a.overridden_at DESC, a.audit_seq DESC
+    LIMIT 1
+  ),
+  (
+    SELECT a.id
+    FROM public.commissioner_pick_override_audits a
+    WHERE a.week_id = (SELECT week_a FROM sub_ids)
+      AND a.target_user_id = (SELECT p3 FROM sub_ids)
+    ORDER BY a.audit_seq DESC
+    LIMIT 1
+  ),
+  'equal/near-equal overridden_at resolves deterministically via audit_seq'
+);
+
+-- No audit stamp → false (p1 still self-picked earlier, before later override section)
+SELECT tests.authenticate_as((SELECT p2 FROM sub_ids));
 SELECT is(
   (
     SELECT currently_commissioner_overridden
@@ -420,11 +538,10 @@ SELECT is(
     WHERE user_id = (SELECT p1 FROM sub_ids)
   ),
   false,
-  'no audit entry means not commissioner-overridden'
+  'no provenance stamp means not commissioner-overridden'
 );
 
--- Hidden pick: override flag without leaking team via status API
-SELECT tests.clear_auth();
+-- 8/9) Hidden pick: override flag without leaking team; RPC columns only
 SELECT tests.authenticate_as((SELECT p2 FROM sub_ids));
 SELECT ok(
   (
@@ -462,14 +579,18 @@ SELECT is(
 SELECT ok(
   (
     SELECT bool_and(
-      NOT (to_jsonb(r) ? 'team_id')
-      AND NOT (to_jsonb(r) ? 'game_id')
-      AND NOT (to_jsonb(r) ? 'new_team_id')
+      (SELECT array_agg(key ORDER BY key)
+       FROM jsonb_object_keys(to_jsonb(r)) AS key)
+      =
+      ARRAY[
+        'currently_commissioner_overridden',
+        'has_pick',
+        'user_id'
+      ]
     )
     FROM public.week_pick_submission_status((SELECT week_a FROM sub_ids)) r
-    WHERE r.user_id = (SELECT p1 FROM sub_ids)
   ),
-  'override-status API does not leak hidden team identity'
+  'submission-status RPC exposes only user_id, has_pick, currently_commissioner_overridden'
 );
 
 -- week_allows_player_picks privilege matrix still intact

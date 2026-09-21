@@ -230,6 +230,7 @@ export type Database = {
           result_source: PickResultSource;
           result_override_reason: string | null;
           game_id: string | null;
+          last_commissioner_override_audit_id: string | null;
         };
         Insert: {
           id?: string;
@@ -242,6 +243,7 @@ export type Database = {
           result_source?: PickResultSource;
           result_override_reason?: string | null;
           game_id?: string | null;
+          last_commissioner_override_audit_id?: string | null;
         };
         Update: {
           id?: string;
@@ -254,6 +256,7 @@ export type Database = {
           result_source?: PickResultSource;
           result_override_reason?: string | null;
           game_id?: string | null;
+          last_commissioner_override_audit_id?: string | null;
         };
         Relationships: [];
       };
@@ -553,6 +556,7 @@ export type Database = {
           cleared: boolean;
           reason: string;
           overridden_at: string;
+          audit_seq: number;
         };
         Insert: {
           id?: string;
@@ -573,6 +577,7 @@ export type Database = {
           cleared?: boolean;
           reason: string;
           overridden_at?: string;
+          audit_seq?: number;
         };
         Update: {
           id?: string;
@@ -593,6 +598,7 @@ export type Database = {
           cleared?: boolean;
           reason?: string;
           overridden_at?: string;
+          audit_seq?: number;
         };
         Relationships: [];
       };
