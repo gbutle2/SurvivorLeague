@@ -19,6 +19,7 @@ import {
 } from "@/lib/dashboard/week-history";
 import { isCommissioner, loadLeagueContext } from "@/lib/league/context";
 import { resolveWeeklyPickDisplayState } from "@/lib/dashboard/weekly-pick-status";
+import { resolveStandingsView } from "@/lib/dashboard/standings-view";
 import {
   buildPickGameOptions,
   loadPlayoffRoundSignals,
@@ -39,8 +40,6 @@ import {
   parseWeekQueryParam,
   resolveDefaultWeekNumber,
   resolveSelectedWeekNumber,
-  resolveStandingsCutoffWeekNumber,
-  standingsCutoffLabel,
 } from "@/lib/weeks/week-selector";
 
 export default async function HomePage({
@@ -182,9 +181,21 @@ export default async function HomePage({
     weekOptions.find((option) => option.weekNumber === selectedWeekNumber) ??
     null;
 
-  const cutoffWeekNumber = selectedWeekNumber
-    ? resolveStandingsCutoffWeekNumber(selectedWeekNumber, scoredWeeks)
-    : null;
+  const standingsView =
+    selectedWeekNumber != null
+      ? resolveStandingsView({
+          selectedWeekNumber,
+          effectiveCurrentWeekNumber,
+          weeks: scoredWeeks,
+        })
+      : {
+          standingsThroughWeek: null as number | null,
+          standingsMode: "preseason" as const,
+          title: "Standings (season not started)",
+          subtitle: null as string | null,
+        };
+
+  const cutoffWeekNumber = standingsView.standingsThroughWeek;
   const seasonFullyComplete =
     scoredWeeks.length >= context.season.regularWeekCount &&
     scoredWeeks.every((week) => week.status === "final");
@@ -220,7 +231,9 @@ export default async function HomePage({
       pointsAwarded: pick.points_awarded,
     })),
     {
+      // 0 includes no weeks when preseason (weekNumber <= 0).
       throughWeekNumber: cutoffWeekNumber ?? 0,
+      regularSeasonWeekCount: context.season.regularWeekCount,
       awardSeasonBonuses: Boolean(
         seasonFullyComplete &&
           cutoffWeekNumber != null &&
@@ -540,7 +553,8 @@ export default async function HomePage({
         weekLabel={
           selectedOption?.optionLabel ?? selectedWeek?.label ?? "No week"
         }
-        standingsTitle={standingsCutoffLabel(cutoffWeekNumber)}
+        standingsTitle={standingsView.title}
+        standingsSubtitle={standingsView.subtitle}
         standings={standings}
         weeklyPicks={weeklyPicks}
         weekSelector={

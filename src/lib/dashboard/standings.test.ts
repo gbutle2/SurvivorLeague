@@ -675,6 +675,7 @@ describe("historical standings cutoff", () => {
         throughWeekNumber: 2,
         awardSeasonBonuses: false,
         includePlayoffs: false,
+        regularSeasonWeekCount: 18,
       },
     );
     const a = throughTwo.find((row) => row.userId === "a");
@@ -708,9 +709,229 @@ describe("historical standings cutoff", () => {
         throughWeekNumber: 2,
         awardSeasonBonuses: false,
         includePlayoffs: false,
+        regularSeasonWeekCount: 18,
       },
     )[0];
     // Two wins only — no best-record / streak season bonuses.
     assert.equal(row?.pointsEarned, 2);
+  });
+
+  it("projects remaining season weeks into max possible without later results", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "open" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const }, // must not leak into Week 1 snapshot
+    ];
+    const historical = buildRegularStandings(
+      [players[0]!],
+      weeks,
+      picks,
+      rules,
+      [],
+      [],
+      {
+        throughWeekNumber: 1,
+        awardSeasonBonuses: false,
+        includePlayoffs: false,
+        regularSeasonWeekCount: 18,
+      },
+    )[0];
+    assert.equal(historical?.wins, 1);
+    assert.equal(historical?.pointsEarned, 1);
+    // 17 remaining regular weeks; no midseason bonuses or playoffs projected.
+    assert.equal(historical?.maxPossible, 1 + 17);
+  });
+});
+
+describe("live in-progress week standings", () => {
+  const weeks = [
+    { id: "w1", weekNumber: 1, status: "final" as const },
+    { id: "w2", weekNumber: 2, status: "open" as const },
+    ...Array.from({ length: 16 }, (_, i) => ({
+      id: `w${i + 3}`,
+      weekNumber: i + 3,
+      status: "upcoming" as const,
+    })),
+  ];
+
+  it("includes determined Week 2 results and excludes pending picks", () => {
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w2", result: "loss" as const },
+      { userId: "c", weekId: "w1", result: "win" as const },
+      { userId: "c", weekId: "w2", result: "pending" as const },
+    ];
+    const standings = buildRegularStandings(
+      [players[0]!, players[1]!, players[2]!],
+      weeks,
+      picks,
+      rules,
+      [],
+      [],
+      {
+        throughWeekNumber: 2,
+        awardSeasonBonuses: false,
+        includePlayoffs: false,
+        regularSeasonWeekCount: 18,
+      },
+    );
+    const a = standings.find((row) => row.userId === "a");
+    const b = standings.find((row) => row.userId === "b");
+    const c = standings.find((row) => row.userId === "c");
+    assert.equal(a?.wins, 2);
+    assert.equal(a?.pointsEarned, 2);
+    assert.equal(a?.currentStreak, 2);
+    assert.equal(a?.survivorAlive, true);
+    assert.equal(b?.wins, 1);
+    assert.equal(b?.losses, 1);
+    assert.equal(b?.currentStreak, 0);
+    assert.equal(b?.survivorAlive, false);
+    assert.equal(c?.wins, 1);
+    assert.equal(c?.pointsEarned, 1);
+    assert.equal(c?.survivorAlive, true);
+  });
+
+  it("keeps a Week 1 eliminate out after a Week 2 win", () => {
+    const picks = [
+      { userId: "a", weekId: "w1", result: "loss" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+    ];
+    const [row] = buildRegularStandings(
+      [players[0]!],
+      weeks,
+      picks,
+      rules,
+      [],
+      [],
+      {
+        throughWeekNumber: 2,
+        awardSeasonBonuses: false,
+        includePlayoffs: false,
+        regularSeasonWeekCount: 18,
+      },
+    );
+    assert.equal(row?.wins, 1);
+    assert.equal(row?.losses, 1);
+    assert.equal(row?.pointsEarned, 1);
+    assert.equal(row?.survivorAlive, false);
+  });
+
+  it("does not treat pending picks as losses for max possible", () => {
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "pending" as const },
+    ];
+    const [row] = buildRegularStandings(
+      [players[0]!],
+      weeks,
+      picks,
+      rules,
+      [],
+      [],
+      {
+        throughWeekNumber: 2,
+        awardSeasonBonuses: false,
+        includePlayoffs: false,
+        regularSeasonWeekCount: 18,
+      },
+    );
+    assert.equal(row?.wins, 1);
+    assert.equal(row?.losses, 0);
+    assert.equal(row?.missed, 0);
+    // Pending Week 2 + Weeks 3–18 = 17 unresolved weekly points.
+    assert.equal(row?.maxPossible, 1 + 17);
+  });
+
+  it("does not project midseason season bonuses into max possible", () => {
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+    ];
+    const [row] = buildRegularStandings(
+      [players[0]!],
+      weeks,
+      picks,
+      rules,
+      [],
+      [],
+      {
+        throughWeekNumber: 2,
+        awardSeasonBonuses: false,
+        includePlayoffs: false,
+        regularSeasonWeekCount: 18,
+      },
+    );
+    assert.equal(row?.pointsEarned, 2);
+    assert.equal(row?.maxPossible, 2 + 16);
+  });
+
+  it("recomputes correctly after a commissioner win→loss correction", () => {
+    const beforePicks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+    ];
+    const afterPicks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "loss" as const },
+    ];
+    const opts = {
+      throughWeekNumber: 2,
+      awardSeasonBonuses: false,
+      includePlayoffs: false,
+      regularSeasonWeekCount: 18,
+    };
+    const before = buildRegularStandings(
+      [players[0]!],
+      weeks,
+      beforePicks,
+      rules,
+      [],
+      [],
+      opts,
+    )[0];
+    const after = buildRegularStandings(
+      [players[0]!],
+      weeks,
+      afterPicks,
+      rules,
+      [],
+      [],
+      opts,
+    )[0];
+    assert.equal(before?.wins, 2);
+    assert.equal(before?.survivorAlive, true);
+    assert.equal(after?.wins, 1);
+    assert.equal(after?.losses, 1);
+    assert.equal(after?.currentStreak, 0);
+    assert.equal(after?.survivorAlive, false);
+    assert.equal(after?.pointsEarned, 1);
+  });
+
+  it("includes graded results when week status is not yet final", () => {
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+    ];
+    const [row] = buildRegularStandings(
+      [players[0]!],
+      weeks,
+      picks,
+      rules,
+      [],
+      [],
+      {
+        throughWeekNumber: 2,
+        awardSeasonBonuses: false,
+        includePlayoffs: false,
+        regularSeasonWeekCount: 18,
+      },
+    );
+    assert.equal(row?.wins, 2);
+    assert.equal(weeks.find((w) => w.weekNumber === 2)?.status, "open");
   });
 });

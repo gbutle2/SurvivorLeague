@@ -148,23 +148,9 @@ export function resolveSelectedWeekNumber(
 
 /**
  * Latest completed (final) week number at or before the selected week.
+ * @deprecated Prefer resolveStandingsView from standings-view.ts
  */
-export function resolveStandingsCutoffWeekNumber(
-  selectedWeekNumber: number,
-  weeks: Array<{ weekNumber: number; status: WeekStatus }>,
-): number | null {
-  const eligible = weeks
-    .filter(
-      (week) =>
-        week.weekNumber <= selectedWeekNumber && week.status === "final",
-    )
-    .sort((a, b) => b.weekNumber - a.weekNumber);
-  return eligible[0]?.weekNumber ?? null;
-}
-
-export function standingsCutoffLabel(cutoffWeekNumber: number | null): string {
-  if (cutoffWeekNumber == null) {
-    return "Standings (no completed weeks yet)";
-  }
-  return `Standings through Week ${cutoffWeekNumber}`;
-}
+export {
+  resolveStandingsCutoffWeekNumber,
+  standingsCutoffLabel,
+} from "../dashboard/standings-view.ts";
