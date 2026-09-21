@@ -110,7 +110,7 @@ describe("week query param", () => {
 });
 
 describe("standings cutoff", () => {
-  it("uses latest final week at or before selection", () => {
+  it("uses latest final week at or before selection when no current week", () => {
     const scored = [
       { weekNumber: 1, status: "final" as const },
       { weekNumber: 2, status: "final" as const },
@@ -120,9 +120,12 @@ describe("standings cutoff", () => {
     assert.equal(resolveStandingsCutoffWeekNumber(3, scored), 2);
     assert.equal(resolveStandingsCutoffWeekNumber(5, scored), 2);
     assert.equal(resolveStandingsCutoffWeekNumber(1, scored), 1);
-    assert.equal(resolveStandingsCutoffWeekNumber(3, [
-      { weekNumber: 3, status: "upcoming" },
-    ]), null);
+    assert.equal(
+      resolveStandingsCutoffWeekNumber(3, [
+        { weekNumber: 3, status: "upcoming" },
+      ]),
+      null,
+    );
     assert.equal(standingsCutoffLabel(2), "Standings through Week 2");
     assert.equal(
       standingsCutoffLabel(null),

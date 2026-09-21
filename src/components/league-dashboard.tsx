@@ -19,6 +19,7 @@ type LeagueDashboardProps = {
   weekNumber: number | null;
   weekLabel: string;
   standingsTitle: string;
+  standingsSubtitle?: string | null;
   standings: Standing[];
   weeklyPicks: WeeklyHistoryRow[];
   weekSelector: ReactNode;
@@ -30,6 +31,7 @@ export function LeagueDashboard({
   weekNumber,
   weekLabel,
   standingsTitle,
+  standingsSubtitle = null,
   standings,
   weeklyPicks,
   weekSelector,
@@ -93,6 +95,9 @@ export function LeagueDashboard({
             <h2 className="font-display text-xl font-bold text-stone-900">
               {standingsTitle}
             </h2>
+            {standingsSubtitle ? (
+              <p className="mt-0.5 text-sm text-stone-600">{standingsSubtitle}</p>
+            ) : null}
           </div>
         </div>
 
