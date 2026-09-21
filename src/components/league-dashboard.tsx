@@ -78,8 +78,9 @@ export function LeagueDashboard({
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">points</p>
                       </div>
                     </div>
-                    <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                    <div className="mt-3 grid grid-cols-5 gap-1.5 text-center">
                       <MobileStat label="Record" value={`${standing.wins}-${standing.losses}${standing.ties ? `-${standing.ties}` : ""}`} />
+                      <MobileStat label="Current" value={String(standing.currentStreak)} />
                       <MobileStat label="Best" value={String(standing.longestStreak)} />
                       <MobileStat label="Survivor" value={standing.survivorAlive ? "Alive" : "Out"} accent={standing.survivorAlive} />
                       <MobileStat label="Max" value={String(standing.maxPossible)} />
@@ -88,12 +89,13 @@ export function LeagueDashboard({
                 ))}
               </ol>
               <div className="hidden overflow-x-auto sm:block">
-                <table className="w-full min-w-[640px] text-left text-sm">
+                <table className="w-full min-w-[720px] text-left text-sm">
                   <thead className="bg-stone-50 text-[11px] uppercase tracking-wide text-stone-500">
                     <tr>
                       <th className="px-3 py-3 font-semibold">Rank</th>
                       <th className="px-3 py-3 font-semibold">Player</th>
                       <th className="px-3 py-3 text-center font-semibold">Record</th>
+                      <th className="px-3 py-3 text-center font-semibold">Current streak</th>
                       <th className="px-3 py-3 text-center font-semibold">Best streak</th>
                       <th className="px-3 py-3 text-center font-semibold">Survivor</th>
                       <th className="px-3 py-3 text-right font-semibold">Earned</th>
@@ -109,6 +111,7 @@ export function LeagueDashboard({
                           {standing.userId === currentUserId ? <span className="ml-1 text-xs font-medium text-emerald-800">You</span> : null}
                         </td>
                         <td className="px-3 py-3 text-center tabular-nums text-stone-700">{standing.wins}-{standing.losses}{standing.ties ? `-${standing.ties}` : ""}</td>
+                        <td className="px-3 py-3 text-center tabular-nums text-stone-700">{standing.currentStreak}</td>
                         <td className="px-3 py-3 text-center tabular-nums text-stone-700">{standing.longestStreak}</td>
                         <td className="px-3 py-3 text-center">
                           <span className={standing.survivorAlive ? "rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-900" : "rounded-full bg-stone-100 px-2 py-1 text-xs font-semibold text-stone-500"}>
