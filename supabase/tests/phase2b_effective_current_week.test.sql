@@ -123,16 +123,14 @@ SELECT lives_ok(
   'earliest eligible future week accepts a pick'
 );
 
-SELECT throws_ok(
+SELECT lives_ok(
   format(
     'INSERT INTO public.picks (week_id, user_id, team_id) VALUES (%L, %L, %L)',
     (SELECT w3 FROM eff2_ids),
     (SELECT player FROM eff2_ids),
     (SELECT team_mia FROM eff2_ids)
   ),
-  '42501',
-  NULL,
-  'later future week rejects a pick'
+  'later future week accepts a scheduled pick'
 );
 
 SELECT tests.clear_auth();
@@ -148,6 +146,7 @@ SELECT ok(
   'Week 3 becomes effective automatically after Week 2 completes'
 );
 
+-- Kickoff lock: Week 2 pick cannot change after that week's game finished.
 SELECT tests.authenticate_as((SELECT player FROM eff2_ids));
 UPDATE public.picks
 SET team_id = (SELECT team_mia FROM eff2_ids)
@@ -161,7 +160,7 @@ SELECT is(
       AND user_id = (SELECT player FROM eff2_ids)
   ),
   (SELECT team_det FROM eff2_ids),
-  'cannot update pick after week is no longer effective'
+  'cannot update pick after selected team kickoff'
 );
 
 SELECT tests.clear_auth();
