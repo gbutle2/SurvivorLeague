@@ -649,3 +649,68 @@ describe("18-week regular-season competition", () => {
     assert.equal(after?.maxPossible, after!.pointsEarned + 24);
   });
 });
+
+describe("historical standings cutoff", () => {
+  it("excludes later weeks from cumulative totals", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+      { id: "w3", weekNumber: 3, status: "open" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "a", weekId: "w3", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w2", result: "loss" as const },
+    ];
+    const throughTwo = buildRegularStandings(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+      rules,
+      [],
+      [],
+      {
+        throughWeekNumber: 2,
+        awardSeasonBonuses: false,
+        includePlayoffs: false,
+      },
+    );
+    const a = throughTwo.find((row) => row.userId === "a");
+    const b = throughTwo.find((row) => row.userId === "b");
+    assert.equal(a?.wins, 2);
+    assert.ok((a?.pointsEarned ?? 0) >= 2);
+    assert.equal(b?.wins, 1);
+    assert.equal(b?.losses, 1);
+    assert.equal(b?.survivorAlive, false);
+  });
+
+  it("does not award mid-season best-record bonuses for a Week 2 cutoff", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w2", result: "win" as const },
+    ];
+    const row = buildRegularStandings(
+      [players[0]!, players[1]!],
+      weeks,
+      picks,
+      rules,
+      [],
+      [],
+      {
+        throughWeekNumber: 2,
+        awardSeasonBonuses: false,
+        includePlayoffs: false,
+      },
+    )[0];
+    // Two wins only — no best-record / streak season bonuses.
+    assert.equal(row?.pointsEarned, 2);
+  });
+});

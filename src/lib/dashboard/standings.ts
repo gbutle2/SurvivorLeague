@@ -398,6 +398,26 @@ function attainableLongestStreakBonus(
   return playerCeiling >= leaderStreak ? bonus : 0;
 }
 
+export type BuildStandingsOptions = {
+  /**
+   * When set, only weeks with weekNumber <= this value are scored.
+   * Use with resolveStandingsCutoffWeekNumber for historical cumulative views.
+   */
+  throughWeekNumber?: number | null;
+  /**
+   * When false, season-level bonuses (best record / longest streak) and the
+   * survivor bonus are never treated as awarded — for mid-season historical
+   * cutoffs where the full season is not yet settled.
+   * Default true (current full-season dashboard behavior).
+   */
+  awardSeasonBonuses?: boolean;
+  /**
+   * When false, playoff points are omitted from earned/max totals.
+   * Default true.
+   */
+  includePlayoffs?: boolean;
+};
+
 export function buildRegularStandings(
   players: DashboardPlayer[],
   weeks: DashboardWeek[],
@@ -405,8 +425,19 @@ export function buildRegularStandings(
   rules: DashboardRules,
   playoffRounds: DashboardPlayoffRound[] = [],
   playoffPicks: DashboardPlayoffPick[] = [],
+  options: BuildStandingsOptions = {},
 ): Standing[] {
-  const orderedWeeks = [...weeks].sort((a, b) => a.weekNumber - b.weekNumber);
+  const throughWeekNumber = options.throughWeekNumber;
+  const awardSeasonBonuses = options.awardSeasonBonuses ?? true;
+  const includePlayoffs = options.includePlayoffs ?? true;
+
+  const orderedWeeks = [...weeks]
+    .filter((week) =>
+      throughWeekNumber == null
+        ? true
+        : week.weekNumber <= throughWeekNumber,
+    )
+    .sort((a, b) => a.weekNumber - b.weekNumber);
   const survivor = resolveSurvivorDecision(players, orderedWeeks, picks);
   const survivorWinners = new Set(survivor.winnerUserIds);
   const runs = players.map((player) =>
@@ -415,12 +446,12 @@ export function buildRegularStandings(
   const maxSurvivorFloor = Math.max(0, ...runs.map((run) => run.weeksSurvived));
 
   const tallies = players.map((player) => {
-    const playoffPoints = sumPlayoffPointsForUser(player.userId, playoffPicks);
-    const playoffAlive = isPlayoffSurvivorAlive(
-      player.userId,
-      playoffRounds,
-      playoffPicks,
-    );
+    const playoffPoints = includePlayoffs
+      ? sumPlayoffPointsForUser(player.userId, playoffPicks)
+      : 0;
+    const playoffAlive = includePlayoffs
+      ? isPlayoffSurvivorAlive(player.userId, playoffRounds, playoffPicks)
+      : false;
     return tallyPlayer(
       player,
       orderedWeeks,
@@ -431,6 +462,7 @@ export function buildRegularStandings(
   });
 
   const regularSeasonFullyScored =
+    awardSeasonBonuses &&
     orderedWeeks.length > 0 &&
     orderedWeeks.every((week) => week.status === "final") &&
     tallies.every((player) => player.unresolvedRegularWeeks === 0);
@@ -452,7 +484,11 @@ export function buildRegularStandings(
         }
       }
 
-      if (survivor.decided && survivorWinners.has(player.userId)) {
+      if (
+        awardSeasonBonuses &&
+        survivor.decided &&
+        survivorWinners.has(player.userId)
+      ) {
         bonusPoints += rules.survivorBonus;
       }
 
@@ -475,7 +511,7 @@ export function buildRegularStandings(
         );
       }
 
-      if (!survivor.decided) {
+      if (awardSeasonBonuses && !survivor.decided) {
         const run = runs.find((entry) => entry.userId === player.userId);
         if (run && run.ceiling >= maxSurvivorFloor) {
           possibleBonuses += rules.survivorBonus;
