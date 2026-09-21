@@ -112,6 +112,10 @@ export function PickForm({
             Selection: {selectedTeam.city} {selectedTeam.name} (
             {selectedTeam.abbreviation})
           </p>
+        ) : initialTeamId ? (
+          <p className="mt-4 rounded-xl border border-amber-200 bg-white px-3 py-3 text-base font-semibold text-stone-900">
+            Your selection is saved and can no longer be changed.
+          </p>
         ) : null}
         <p className="mt-3 text-xs text-amber-900">
           Schedule sync: {lastSyncLabel}

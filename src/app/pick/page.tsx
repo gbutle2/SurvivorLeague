@@ -10,6 +10,7 @@ import { loadLeagueContext } from "@/lib/league/context";
 import { usedTeamIds } from "@/lib/picks/used-teams";
 import {
   buildPickGameOptions,
+  isExistingPickLocked,
   loadRegularWeekSignals,
 } from "@/lib/nfl/schedule-query";
 import { createClient } from "@/lib/supabase/server";
@@ -244,6 +245,10 @@ export default async function PickPage({
   const renderedAtMs = Date.parse(new Date().toISOString());
   const allLocked =
     pickOptions.length === 0 || pickOptions.every((option) => option.locked);
+  const existingPickLocked = isExistingPickLocked({
+    selectedTeamId: existingPick?.team_id ?? null,
+    options: pickOptions,
+  });
 
   return (
     <AppShell title="Your Pick" subtitle={context.league.name}>
@@ -259,8 +264,12 @@ export default async function PickPage({
         teams={pickOptions}
         initialTeamId={existingPick?.team_id ?? null}
         weekLabel={week.label}
-        deadlineLabel="Locks at your selected team’s kickoff (Central Time)"
-        locked={allLocked && Boolean(existingPick)}
+        deadlineLabel={
+          existingPickLocked
+            ? "Your pick locked when your selected team’s game began (Central Time)."
+            : "Locks at your selected team’s kickoff (Central Time)"
+        }
+        locked={existingPickLocked}
         noEligibleGames={allLocked && !existingPick}
         lastSyncLabel={syncLabel}
         nowMs={renderedAtMs}

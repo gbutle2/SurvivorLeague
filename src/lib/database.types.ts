@@ -942,6 +942,18 @@ export type Database = {
         Args: { p_league_id: string };
         Returns: number;
       };
+      week_allows_player_picks: {
+        Args: { p_week_id: string };
+        Returns: boolean;
+      };
+      week_pick_submission_status: {
+        Args: { p_week_id: string };
+        Returns: {
+          user_id: string;
+          has_pick: boolean;
+          currently_commissioner_overridden: boolean;
+        }[];
+      };
     };
     Enums: {
       member_role: MemberRole;

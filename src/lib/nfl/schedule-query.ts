@@ -162,11 +162,11 @@ export function buildPickGameOptions(args: {
 
   for (const game of args.games) {
     const kickoffMs = new Date(game.scheduled_kickoff_at).getTime();
-    const locked =
-      kickoffMs <= now ||
-      game.status === "in_progress" ||
-      game.status === "final" ||
-      game.status === "canceled";
+    // Match DB team_regular_game_is_unlocked: scheduled/postponed and kickoff > now.
+    const locked = !(
+      (game.status === "scheduled" || game.status === "postponed") &&
+      kickoffMs > now
+    );
 
     const sides = [
       {
@@ -203,4 +203,21 @@ export function buildPickGameOptions(args: {
     if (kickoff !== 0) return kickoff;
     return a.abbreviation.localeCompare(b.abbreviation);
   });
+}
+
+/**
+ * True when the player's existing selected team is past its mutation lock.
+ * Mirrors DB: status not scheduled/postponed, or kickoff at/before now.
+ * When the selected team is missing from options (e.g. canceled), treat as locked.
+ */
+export function isExistingPickLocked(args: {
+  selectedTeamId: string | null;
+  options: PickGameOption[];
+}): boolean {
+  if (!args.selectedTeamId) return false;
+  const option = args.options.find(
+    (row) => row.teamId === args.selectedTeamId,
+  );
+  if (!option) return true;
+  return option.locked;
 }

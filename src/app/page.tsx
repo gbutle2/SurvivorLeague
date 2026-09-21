@@ -18,8 +18,10 @@ import {
   weeklyPointsForResult,
 } from "@/lib/dashboard/week-history";
 import { isCommissioner, loadLeagueContext } from "@/lib/league/context";
+import { resolveWeeklyPickDisplayState } from "@/lib/dashboard/weekly-pick-status";
 import {
   buildPickGameOptions,
+  isExistingPickLocked,
   loadPlayoffRoundSignals,
   loadRegularWeekSignals,
 } from "@/lib/nfl/schedule-query";
@@ -92,7 +94,7 @@ export default async function HomePage({
       weekIds.length
         ? supabase
             .from("picks")
-            .select("user_id, week_id, team_id, result, result_source")
+            .select("user_id, week_id, team_id, result")
             .in("week_id", weekIds)
         : Promise.resolve({ data: [], error: null }),
       playoffRoundIds.length
@@ -251,19 +253,38 @@ export default async function HomePage({
   const selectedSignal = selectedWeek
     ? signalByWeek.get(selectedWeek.week_number)
     : undefined;
-  const weekFinished = selectedWeek
-    ? resolveStandingsWeekStatus(selectedWeek.status, selectedSignal) === "final"
-    : false;
   const regularPickPoints = scoring?.correctRegularPickPoints ?? 0;
+
+  const submissionStatusResult = selectedWeek
+    ? await supabase.rpc("week_pick_submission_status", {
+        p_week_id: selectedWeek.id,
+      })
+    : { data: [] as Array<{
+        user_id: string;
+        has_pick: boolean;
+        currently_commissioner_overridden: boolean;
+      }>, error: null };
+
+  const submissionByUser = new Map(
+    (submissionStatusResult.data ?? []).map((row) => [
+      row.user_id,
+      {
+        hasPick: Boolean(row.has_pick),
+        currentlyCommissionerOverridden: Boolean(
+          row.currently_commissioner_overridden,
+        ),
+      },
+    ]),
+  );
 
   const weeklyPicks = selectedWeek
     ? players.map((player) => {
         const pick = pickByUser.get(player.userId);
-        const state = pick
-          ? ("visible" as const)
-          : player.userId === context.userId || weekFinished
-            ? ("missing" as const)
-            : ("hidden" as const);
+        const status = submissionByUser.get(player.userId);
+        const state = resolveWeeklyPickDisplayState({
+          hasVisiblePick: Boolean(pick),
+          hasPick: status?.hasPick ?? Boolean(pick),
+        });
         return {
           userId: player.userId,
           displayName: player.displayName,
@@ -281,7 +302,7 @@ export default async function HomePage({
             })),
             selectedWeek.week_number,
           ),
-          overridden: pick?.result_source === "commissioner",
+          overridden: status?.currentlyCommissionerOverridden ?? false,
         };
       })
     : [];
@@ -392,11 +413,15 @@ export default async function HomePage({
           (pick) => pick.week_id === selectedWeek.id,
         ) ?? null;
       const allLocked = options.length === 0 || options.every((o) => o.locked);
+      const existingPickLocked = isExistingPickLocked({
+        selectedTeamId: existingPick?.team_id ?? null,
+        options,
+      });
       const syncLabel = lastSyncResult.data?.completed_at
         ? formatCentralDateTime(lastSyncResult.data.completed_at)
         : "never";
 
-      if (options.length === 0) {
+      if (options.length === 0 && !existingPick) {
         yourPickPanel = (
           <StatusPanel title="No eligible games" tone="warning">
             <p>
@@ -412,8 +437,12 @@ export default async function HomePage({
             teams={options}
             initialTeamId={existingPick?.team_id ?? null}
             weekLabel={selectedWeek.label}
-            deadlineLabel="Locks at your selected team’s kickoff (Central Time)"
-            locked={allLocked && Boolean(existingPick)}
+            deadlineLabel={
+              existingPickLocked
+                ? "Your pick locked when your selected team’s game began (Central Time)."
+                : "Locks at your selected team’s kickoff (Central Time)"
+            }
+            locked={existingPickLocked}
             noEligibleGames={allLocked && !existingPick}
             lastSyncLabel={syncLabel}
             nowMs={Date.parse(new Date().toISOString())}

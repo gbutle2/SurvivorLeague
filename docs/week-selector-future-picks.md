@@ -1,7 +1,10 @@
 # Week selector and future picks
 
 Feature branch: `feature/week-selector-future-picks`  
-Migration (local only until release): `supabase/migrations/20260922150000_week_selector_future_picks.sql`
+Migrations (local only until release):
+
+- `supabase/migrations/20260922150000_week_selector_future_picks.sql`
+- `supabase/migrations/20260922160000_week_pick_submission_status.sql` (forward correction)
 
 ## Authority rules
 
@@ -10,6 +13,9 @@ Migration (local only until release): `supabase/migrations/20260922150000_week_s
 | Which week is the UI default | Schedule-derived `effective_current_week_id` (earliest week with a future kickoff) |
 | Whether a player may mutate a pick for a week | `week_allows_player_picks`: active season and week status **not** `locked`/`final` |
 | Whether a specific team may be chosen or kept | Per-team kickoff via `pick_team_plays_unlocked_in_week` (`scheduled`/`postponed` and `scheduled_kickoff_at > now()`) |
+| Whether an existing pick may still be changed | Selected team's game still unlocked; UI locks the whole form via `isExistingPickLocked` |
+| Peer submission status (without team) | `week_pick_submission_status(week_id)` — `user_id`, `has_pick`, `currently_commissioner_overridden` |
+| Commissioner override indicator | Latest audit whose `new_team_id`/`new_game_id` still match the current pick (not `result_source`) |
 | Commissioner `open` status / one-open index | Administrative only — does **not** gate player picks |
 | Peer pick visibility | Unchanged: own row, or kickoff has started on the pick’s `game_id` |
 
