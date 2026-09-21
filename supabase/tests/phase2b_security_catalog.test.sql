@@ -3,7 +3,7 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgtap;
 
-SELECT plan(16);
+SELECT plan(17);
 
 -- Obsolete triggers must not exist
 SELECT is(
@@ -346,9 +346,23 @@ SELECT throws_ok(
            result_source = 'commissioner',
            result_override_reason = '   '
      WHERE user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaca1'$$,
+  '42501',
+  NULL,
+  'direct commissioner pick mutation is closed'
+);
+
+SELECT throws_ok(
+  $$SELECT tests.authenticate_as('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaca2');
+    SELECT public.commissioner_override_pick(
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaca1',
+      'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeca1',
+      (SELECT id FROM public.teams WHERE abbreviation = 'KC'),
+      '   '
+    );
+    SELECT tests.clear_auth();$$,
   '23514',
   NULL,
-  'commissioner overrides still require a nonblank reason'
+  'commissioner_override_pick still requires a nonblank reason'
 );
 
 SELECT lives_ok(

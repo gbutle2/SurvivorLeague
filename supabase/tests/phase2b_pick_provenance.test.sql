@@ -203,8 +203,7 @@ SELECT is(
   'team change atomically updates derived game_id'
 );
 
--- Commissioner override requires provenance + reason
--- Commissioner override rules (superuser + JWT so RLS cannot hide zero-row updates).
+-- Direct commissioner result mutation is closed; use commissioner_override_pick.
 SELECT throws_ok(
   $$SELECT set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02', true);
     SELECT set_config(
@@ -215,9 +214,9 @@ SELECT throws_ok(
     UPDATE public.picks
        SET result = 'win', result_source = 'auto'
      WHERE user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01'$$,
-  '23514',
-  'Commissioner result changes require result_source = commissioner',
-  'commissioner result change without commissioner source is rejected'
+  '42501',
+  'Use commissioner_override_pick to change regular-season picks',
+  'direct commissioner result mutation is rejected'
 );
 
 SELECT throws_ok(
@@ -230,22 +229,23 @@ SELECT throws_ok(
     UPDATE public.picks
        SET result = 'win',
            result_source = 'commissioner',
-           result_override_reason = '   '
+           result_override_reason = 'Box score corrected'
      WHERE user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01'$$,
-  '23514',
-  'Commissioner override requires a nonblank reason',
-  'commissioner override without nonblank reason is rejected'
+  '42501',
+  'Use commissioner_override_pick to change regular-season picks',
+  'direct commissioner override path is closed'
 );
 
 SELECT lives_ok(
   $$SELECT tests.authenticate_as('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02');
-    UPDATE public.picks
-       SET result = 'win',
-           result_source = 'commissioner',
-           result_override_reason = 'Box score corrected'
-     WHERE user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01';
+    SELECT public.commissioner_override_pick(
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01',
+      'eeeeeeee-eeee-eeee-eeee-eeeeeeeeee01',
+      (SELECT id FROM public.teams WHERE abbreviation = 'BUF'),
+      'Box score corrected'
+    );
     SELECT tests.clear_auth();$$,
-  'commissioner override with reason succeeds'
+  'commissioner_override_pick with reason succeeds'
 );
 
 SELECT * FROM finish();

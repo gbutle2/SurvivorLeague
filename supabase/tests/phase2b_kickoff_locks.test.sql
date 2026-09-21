@@ -211,11 +211,13 @@ SELECT ok(
 SELECT tests.authenticate_as((SELECT commissioner FROM kick_ids));
 SELECT lives_ok(
   format(
-    'UPDATE public.picks SET result = %L, result_source = %L, result_override_reason = %L WHERE week_id = %L AND user_id = %L',
-    'win', 'commissioner', 'Kickoff lock test override',
-    (SELECT w1 FROM kick_ids), (SELECT player FROM kick_ids)
+    'SELECT public.commissioner_override_pick(%L, %L, %L, %L)',
+    (SELECT player FROM kick_ids),
+    (SELECT w1 FROM kick_ids),
+    (SELECT team_thu FROM kick_ids),
+    'Kickoff lock test override'
   ),
-  'commissioner can set pick results'
+  'commissioner_override_pick works after kickoff'
 );
 SELECT tests.clear_auth();
 

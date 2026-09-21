@@ -509,6 +509,69 @@ export type Database = {
         };
         Relationships: [];
       };
+      commissioner_pick_override_audits: {
+        Row: {
+          id: string;
+          commissioner_user_id: string;
+          target_user_id: string;
+          league_id: string;
+          season_id: string;
+          week_id: string;
+          week_number: number;
+          previous_team_id: string | null;
+          previous_game_id: string | null;
+          previous_result: PickResult | null;
+          previous_points: number | null;
+          new_team_id: string | null;
+          new_game_id: string | null;
+          new_result: PickResult | null;
+          new_points: number | null;
+          cleared: boolean;
+          reason: string;
+          overridden_at: string;
+        };
+        Insert: {
+          id?: string;
+          commissioner_user_id: string;
+          target_user_id: string;
+          league_id: string;
+          season_id: string;
+          week_id: string;
+          week_number: number;
+          previous_team_id?: string | null;
+          previous_game_id?: string | null;
+          previous_result?: PickResult | null;
+          previous_points?: number | null;
+          new_team_id?: string | null;
+          new_game_id?: string | null;
+          new_result?: PickResult | null;
+          new_points?: number | null;
+          cleared?: boolean;
+          reason: string;
+          overridden_at?: string;
+        };
+        Update: {
+          id?: string;
+          commissioner_user_id?: string;
+          target_user_id?: string;
+          league_id?: string;
+          season_id?: string;
+          week_id?: string;
+          week_number?: number;
+          previous_team_id?: string | null;
+          previous_game_id?: string | null;
+          previous_result?: PickResult | null;
+          previous_points?: number | null;
+          new_team_id?: string | null;
+          new_game_id?: string | null;
+          new_result?: PickResult | null;
+          new_points?: number | null;
+          cleared?: boolean;
+          reason?: string;
+          overridden_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -523,6 +586,50 @@ export type Database = {
       shares_league_with: {
         Args: { p_user_id: string };
         Returns: boolean;
+      };
+      commissioner_override_pick: {
+        Args: {
+          p_target_user_id: string;
+          p_week_id: string;
+          p_team_id?: string | null;
+          p_reason: string;
+          p_submitted_requester_id?: string | null;
+          p_submitted_league_id?: string | null;
+          p_submitted_role?: string | null;
+          p_submitted_result?: PickResult | null;
+          p_submitted_points?: number | null;
+          p_submitted_game_id?: string | null;
+        };
+        Returns: Json;
+      };
+      commissioner_list_week_picks: {
+        Args: { p_week_id: string };
+        Returns: {
+          user_id: string;
+          display_name: string;
+          pick_id: string | null;
+          team_id: string | null;
+          team_abbreviation: string | null;
+          team_city: string | null;
+          team_name: string | null;
+          game_id: string | null;
+          result: PickResult | null;
+          points: number;
+          submitted_at: string | null;
+          updated_at: string | null;
+          last_override_at: string | null;
+          last_override_reason: string | null;
+          last_override_by: string | null;
+          used_elsewhere: Json;
+        }[];
+      };
+      commissioner_preview_pick_override: {
+        Args: { p_week_id: string; p_team_id: string };
+        Returns: Json;
+      };
+      regular_pick_points_for_result: {
+        Args: { p_result: PickResult; p_season_id: string };
+        Returns: number;
       };
     };
     Enums: {

@@ -99,6 +99,12 @@ export default async function CommissionerPage() {
           href="/commissioner/members"
         />
 
+        <NavCard
+          title="Manage picks"
+          description="Create, change, or clear any player's regular-season pick for any week, including locked and final weeks."
+          href="/commissioner/picks"
+        />
+
         <StatusPanel title="Season" tone="neutral">
           <p>
             Status: <strong>{context.season.status}</strong>
