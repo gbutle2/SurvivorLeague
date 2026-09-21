@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
+    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\" && npm run test:components",
+    "test:components": "tsx --import ./src/test/setup-dom.ts --test \"src/**/*.component.test.tsx\"",
     "test:import": "node --experimental-strip-types --test --test-timeout=60000 \"src/lib/import/*.integration.ts\" \"src/lib/nfl/*.integration.ts\"",
     "test:sync": "node --experimental-strip-types --test \"src/lib/nfl/*.test.ts\"",
     "test:db": "npx supabase test db",
@@ -25,13 +26,19 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/node": "^20",
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
+    "jsdom": "^29.1.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

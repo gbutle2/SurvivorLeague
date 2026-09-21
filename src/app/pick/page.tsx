@@ -10,9 +10,13 @@ import { loadLeagueContext } from "@/lib/league/context";
 import { usedTeamIds } from "@/lib/picks/used-teams";
 import {
   buildPickGameOptions,
-  isExistingPickLocked,
   loadRegularWeekSignals,
 } from "@/lib/nfl/schedule-query";
+import {
+  resolveAuthoritativePickGame,
+  resolveExistingPickLockState,
+} from "@/lib/picks/eligibility";
+import { buildSavedPickSummary } from "@/lib/picks/saved-summary";
 import { createClient } from "@/lib/supabase/server";
 import { formatCentralDateTime } from "@/lib/time/chicago";
 import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
@@ -174,7 +178,7 @@ export default async function PickPage({
   const [{ data: seasonPicks }, { data: games }] = await Promise.all([
     supabase
       .from("picks")
-      .select("id, week_id, team_id, result")
+      .select("id, week_id, team_id, result, game_id")
       .eq("user_id", context.userId)
       .in(
         "week_id",
@@ -240,31 +244,50 @@ export default async function PickPage({
     retainTeamId: existingPick?.team_id ?? null,
   });
 
-  const selectedGame = existingPick
-    ? (gameRows.find(
-        (game) =>
-          game.home_team_id === existingPick.team_id ||
-          game.away_team_id === existingPick.team_id,
-      ) ?? null)
+  const renderedAtMs = Date.parse(new Date().toISOString());
+
+  const { game: authoritativeGame, unresolved: gameUnresolved } =
+    resolveAuthoritativePickGame({
+      pick: existingPick
+        ? {
+            team_id: existingPick.team_id,
+            game_id: existingPick.game_id ?? null,
+          }
+        : null,
+      games: gameRows,
+    });
+
+  const existingPickState = resolveExistingPickLockState({
+    hasExistingPick: Boolean(existingPick),
+    weekStatus: week.status,
+    authoritativeGame,
+    gameUnresolved,
+    nowMs: renderedAtMs,
+  });
+
+  const fullAuthoritativeGame = authoritativeGame
+    ? (gameRows.find((game) => game.id === authoritativeGame.id) ?? null)
+    : null;
+
+  const savedSummary = existingPick
+    ? buildSavedPickSummary({
+        teamId: existingPick.team_id,
+        game: fullAuthoritativeGame,
+        team: (() => {
+          for (const game of gameRows) {
+            if (game.home.id === existingPick.team_id) return game.home;
+            if (game.away.id === existingPick.team_id) return game.away;
+          }
+          return null;
+        })(),
+      })
     : null;
 
   const syncLabel = lastSync?.completed_at
     ? formatCentralDateTime(lastSync.completed_at)
     : "never";
-  const renderedAtMs = Date.parse(new Date().toISOString());
   const allLocked =
     pickOptions.length === 0 || pickOptions.every((option) => option.locked);
-  const existingPickLocked = isExistingPickLocked({
-    selectedTeamId: existingPick?.team_id ?? null,
-    options: pickOptions,
-    selectedGame: selectedGame
-      ? {
-          status: selectedGame.status,
-          scheduled_kickoff_at: selectedGame.scheduled_kickoff_at,
-        }
-      : null,
-    nowMs: renderedAtMs,
-  });
 
   return (
     <AppShell title="Your Pick" subtitle={context.league.name}>
@@ -282,11 +305,12 @@ export default async function PickPage({
         teams={pickOptions}
         initialTeamId={existingPick?.team_id ?? null}
         weekLabel={week.label}
-        locked={existingPickLocked}
+        existingPickState={existingPickState}
         noEligibleGames={allLocked && !existingPick}
         lastSyncLabel={syncLabel}
         nowMs={renderedAtMs}
         pickResult={existingPick?.result ?? null}
+        savedSummary={savedSummary}
       />
     </AppShell>
   );

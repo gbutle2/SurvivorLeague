@@ -38,4 +38,25 @@ describe("usedTeamIds", () => {
       "USED",
     );
   });
+
+  it("treats a current-week SF pick as used when selecting a different week", () => {
+    const sf = "sf-team-id";
+    const usedForWeek4 = usedTeamIds(
+      [
+        { week_id: "week-3", team_id: sf },
+        { week_id: "week-1", team_id: "kc" },
+      ],
+      { excludeWeekId: "week-4" },
+    );
+    assert.equal(usedForWeek4.has(sf), true);
+
+    const usedForWeek3 = usedTeamIds(
+      [
+        { week_id: "week-3", team_id: sf },
+        { week_id: "week-1", team_id: "kc" },
+      ],
+      { excludeWeekId: "week-3" },
+    );
+    assert.equal(usedForWeek3.has(sf), false);
+  });
 });

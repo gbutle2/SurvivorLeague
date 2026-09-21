@@ -7,26 +7,35 @@ import type { PickGameOption } from "@/lib/nfl/schedule-query";
 import {
   defaultPickEditorExpanded,
   formatPickDeadlineLine,
+  PICK_UNVERIFIED_MESSAGE,
   resolvePickEditorMode,
+  type ExistingPickLockState,
   type PickEditorMode,
 } from "@/lib/picks/eligibility";
+import type { SavedPickSummary } from "@/lib/picks/saved-summary";
 
-type PickFormProps = {
+export type PickFormProps = {
   weekId: string;
   weekNumber: number;
   teams: PickGameOption[];
   initialTeamId: string | null;
   weekLabel: string;
-  locked: boolean;
+  /** Tri-state for an existing saved pick; ignored when there is no pick. */
+  existingPickState?: ExistingPickLockState;
   noEligibleGames?: boolean;
   scheduleUnavailable?: boolean;
   lastSyncLabel: string;
   nowMs: number;
-  /** Pending / win / loss / tie when known for the saved pick. */
   pickResult?: string | null;
+  /** Authoritative saved-team display (not derived from filtered options). */
+  savedSummary?: SavedPickSummary | null;
+  /** Optional action override for rendered tests. */
+  actionOverride?: typeof savePick;
+  /** Optional initial action state for rendered tests (e.g. stale error). */
+  initialActionState?: PickActionState;
 };
 
-const initialState: PickActionState = {
+const defaultInitialState: PickActionState = {
   error: null,
   success: null,
   savedTeamId: null,
@@ -49,7 +58,6 @@ function formatKickoff(iso: string): string {
 
 function statusLine(args: {
   mode: PickEditorMode;
-  locked: boolean;
   kickoffAt: string | null;
   pickResult: string | null | undefined;
 }): string {
@@ -57,8 +65,11 @@ function statusLine(args: {
   if (result === "win" || result === "loss" || result === "tie") {
     return `Final · ${result}`;
   }
+  if (args.mode === "unverified") {
+    return "Schedule verification needed";
+  }
   return formatPickDeadlineLine({
-    locked: args.locked || args.mode === "locked",
+    locked: args.mode === "locked",
     kickoffAt: args.kickoffAt,
     formatKickoff,
   });
@@ -70,15 +81,21 @@ export function PickForm({
   teams,
   initialTeamId,
   weekLabel,
-  locked,
+  existingPickState = "editable",
   noEligibleGames = false,
   scheduleUnavailable = false,
   lastSyncLabel,
   nowMs,
   pickResult = null,
+  savedSummary = null,
+  actionOverride,
+  initialActionState,
 }: PickFormProps) {
   const panelId = useId();
-  const [state, action, pending] = useActionState(savePick, initialState);
+  const [state, action, pending] = useActionState(
+    actionOverride ?? savePick,
+    initialActionState ?? defaultInitialState,
+  );
   const [, startTransition] = useTransition();
   const [query, setQuery] = useState("");
   const [selectedTeamId, setSelectedTeamId] = useState(
@@ -90,7 +107,6 @@ export function PickForm({
   const [seenSuccess, setSeenSuccess] = useState<string | null>(null);
   const [seenError, setSeenError] = useState<string | null>(null);
 
-  // Adjust panel intent when the server action result changes (React render-time sync).
   if (state.success && state.success !== seenSuccess) {
     setSeenSuccess(state.success);
     setIntent("closed");
@@ -106,9 +122,10 @@ export function PickForm({
     setDismissedSuccess(true);
   }
 
+  const hasExistingPick = Boolean(state.savedTeamId ?? initialTeamId);
   const mode = resolvePickEditorMode({
-    hasExistingPick: Boolean(state.savedTeamId ?? initialTeamId),
-    existingPickLocked: locked,
+    hasExistingPick,
+    existingPickState: hasExistingPick ? existingPickState : "editable",
     noEligibleGames,
     scheduleUnavailable,
   });
@@ -133,13 +150,25 @@ export function PickForm({
     });
   }, [teams, query]);
 
-  const selectedTeam =
+  const selectedFromOptions =
     teams.find((team) => team.teamId === effectiveSelected) ?? null;
 
-  const savedTeam =
-    teams.find(
-      (team) => team.teamId === (state.savedTeamId ?? initialTeamId),
-    ) ?? null;
+  const displaySummary: SavedPickSummary | null =
+    savedSummary &&
+    (savedSummary.teamId === (state.savedTeamId ?? initialTeamId) ||
+      !state.savedTeamId)
+      ? savedSummary
+      : selectedFromOptions
+        ? {
+            teamId: selectedFromOptions.teamId,
+            abbreviation: selectedFromOptions.abbreviation,
+            city: selectedFromOptions.city,
+            name: selectedFromOptions.name,
+            opponentAbbreviation: selectedFromOptions.opponentAbbreviation,
+            homeAway: selectedFromOptions.homeAway,
+            kickoffAt: selectedFromOptions.kickoffAt,
+          }
+        : savedSummary;
 
   const displayError =
     state.error && !dismissedError ? state.error : null;
@@ -147,7 +176,13 @@ export function PickForm({
     state.success && !dismissedSuccess ? state.success : null;
 
   function expandEditor() {
-    if (mode === "locked" || mode === "unavailable") return;
+    if (
+      mode === "locked" ||
+      mode === "unavailable" ||
+      mode === "unverified"
+    ) {
+      return;
+    }
     setIntent("open");
     setDismissedError(true);
     setDismissedSuccess(true);
@@ -168,36 +203,57 @@ export function PickForm({
   }
 
   const kickoffWarning =
-    selectedTeam &&
-    !selectedTeam.locked &&
-    new Date(selectedTeam.kickoffAt).getTime() - nowMs < 2 * 60 * 60 * 1000;
+    selectedFromOptions &&
+    !selectedFromOptions.locked &&
+    new Date(selectedFromOptions.kickoffAt).getTime() - nowMs <
+      2 * 60 * 60 * 1000;
 
-  const summaryKickoff = savedTeam?.kickoffAt ?? selectedTeam?.kickoffAt ?? null;
+  const summaryKickoff = displaySummary?.kickoffAt ?? null;
   const summaryStatus = statusLine({
     mode,
-    locked,
     kickoffAt: summaryKickoff,
     pickResult,
   });
 
-  if (mode === "unavailable") {
+  if (mode === "unavailable" || mode === "unverified") {
     return (
       <section
         className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm"
         aria-live="polite"
+        data-pick-mode={mode}
       >
         <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Your Pick · Week {weekNumber}
         </p>
-        <h2 className="mt-1 text-lg font-semibold text-stone-900">
-          {scheduleUnavailable
-            ? `Schedule unavailable for ${weekLabel}`
-            : `No eligible games for ${weekLabel}`}
-        </h2>
-        <p className="mt-1 text-sm text-stone-600">
-          {scheduleUnavailable
-            ? `The schedule for Week ${weekNumber} is not available yet.`
-            : "Bye weeks and kicked-off games cannot be selected."}
+        {displaySummary ? (
+          <>
+            <h2 className="mt-1 text-lg font-semibold text-stone-900">
+              {displaySummary.city} {displaySummary.name} (
+              {displaySummary.abbreviation})
+            </h2>
+            {displaySummary.opponentAbbreviation ? (
+              <p className="mt-0.5 text-sm text-stone-600">
+                {displaySummary.homeAway === "home" ? "vs" : "@"}{" "}
+                {displaySummary.opponentAbbreviation}
+                {summaryKickoff ? ` · ${formatKickoff(summaryKickoff)}` : ""}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <h2 className="mt-1 text-lg font-semibold text-stone-900">
+            {mode === "unverified"
+              ? "Saved pick"
+              : scheduleUnavailable
+                ? `Schedule unavailable for ${weekLabel}`
+                : `No eligible games for ${weekLabel}`}
+          </h2>
+        )}
+        <p className="mt-2 text-sm text-stone-700" role="status">
+          {mode === "unverified"
+            ? PICK_UNVERIFIED_MESSAGE
+            : scheduleUnavailable
+              ? `The schedule for Week ${weekNumber} is not available yet.`
+              : "Bye weeks and kicked-off games cannot be selected."}
         </p>
         <p className="mt-3 text-xs text-stone-500">
           Schedule sync: {lastSyncLabel}
@@ -210,23 +266,29 @@ export function PickForm({
   const showEditor = expanded && canEdit;
 
   return (
-    <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+    <section
+      className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm"
+      data-pick-mode={mode}
+      data-pick-expanded={showEditor ? "true" : "false"}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
             Your Pick · Week {weekNumber}
           </p>
-          {savedTeam || selectedTeam ? (
+          {displaySummary ? (
             <>
               <h2 className="mt-1 text-lg font-semibold text-stone-900">
-                {(savedTeam ?? selectedTeam)!.city}{" "}
-                {(savedTeam ?? selectedTeam)!.name} (
-                {(savedTeam ?? selectedTeam)!.abbreviation})
+                {displaySummary.city} {displaySummary.name} (
+                {displaySummary.abbreviation})
               </h2>
               <p className="mt-0.5 text-sm text-stone-600">
-                {(savedTeam ?? selectedTeam)!.homeAway === "home" ? "vs" : "@"}{" "}
-                {(savedTeam ?? selectedTeam)!.opponentAbbreviation}
-                {summaryKickoff ? ` · ${formatKickoff(summaryKickoff)}` : ""}
+                {displaySummary.opponentAbbreviation
+                  ? `${displaySummary.homeAway === "home" ? "vs" : "@"} ${displaySummary.opponentAbbreviation}`
+                  : null}
+                {summaryKickoff
+                  ? `${displaySummary.opponentAbbreviation ? " · " : ""}${formatKickoff(summaryKickoff)}`
+                  : ""}
               </p>
               <p className="mt-1 text-sm font-medium text-stone-800">
                 {summaryStatus}
@@ -249,6 +311,7 @@ export function PickForm({
             className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-xl border border-stone-300 bg-white px-3 text-sm font-semibold text-stone-800"
             aria-expanded={showEditor}
             aria-controls={panelId}
+            data-testid="pick-expand-toggle"
             onClick={() => {
               if (showEditor) collapseEditor();
               else expandEditor();
@@ -269,6 +332,7 @@ export function PickForm({
             className="inline-flex min-h-11 items-center justify-center rounded-xl bg-emerald-800 px-4 text-sm font-semibold text-white"
             aria-expanded={false}
             aria-controls={panelId}
+            data-testid="pick-primary-action"
             onClick={expandEditor}
           >
             {mode === "no_pick" ? "Make pick" : "Change pick"}
@@ -287,6 +351,7 @@ export function PickForm({
           id={panelId}
           action={action}
           className="mt-4 space-y-4 border-t border-stone-100 pt-4"
+          data-testid="pick-editor"
           onSubmit={() => {
             setDismissedError(false);
             setDismissedSuccess(false);
@@ -299,14 +364,14 @@ export function PickForm({
                 ? "Change your team"
                 : "Choose a team"}
             </h3>
-            {selectedTeam ? (
+            {selectedFromOptions ? (
               <p className="text-sm font-medium text-stone-800">
                 {formatPickDeadlineLine({
                   locked: false,
-                  kickoffAt: selectedTeam.kickoffAt,
+                  kickoffAt: selectedFromOptions.kickoffAt,
                   formatKickoff,
                 })}{" "}
-                for {selectedTeam.abbreviation}.
+                for {selectedFromOptions.abbreviation}.
               </p>
             ) : (
               <p className="text-sm text-stone-600">
@@ -322,6 +387,7 @@ export function PickForm({
             <p
               className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900"
               role="alert"
+              data-testid="pick-error"
             >
               {displayError}
             </p>
@@ -330,6 +396,7 @@ export function PickForm({
             <p
               className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"
               role="status"
+              data-testid="pick-success"
             >
               {displaySuccess}
             </p>
@@ -340,8 +407,8 @@ export function PickForm({
               role="status"
             >
               Your selection kicks off soon (
-              {formatKickoff(selectedTeam!.kickoffAt)}). Changing after kickoff
-              is rejected by the database.
+              {formatKickoff(selectedFromOptions!.kickoffAt)}). Changing after
+              kickoff is rejected by the database.
             </p>
           ) : null}
 
@@ -355,10 +422,11 @@ export function PickForm({
               onChange={(event) => setQuery(event.target.value)}
               className="min-h-11 w-full rounded-xl border border-stone-300 bg-white px-3 text-base text-stone-900"
               placeholder="Team or opponent"
+              data-testid="pick-search"
             />
           </label>
 
-          <fieldset className="space-y-2">
+          <fieldset className="space-y-2" data-testid="pick-team-list">
             <legend className="sr-only">Teams playing this week</legend>
             {filtered.map((team) => {
               const isCurrent =
@@ -415,6 +483,7 @@ export function PickForm({
               type="submit"
               disabled={pending || !effectiveSelected}
               className="inline-flex min-h-12 flex-1 items-center justify-center rounded-xl bg-emerald-800 px-4 text-base font-semibold text-white disabled:opacity-60"
+              data-testid="pick-save"
             >
               {pending ? "Saving…" : "Save pick"}
             </button>
@@ -422,6 +491,7 @@ export function PickForm({
               type="button"
               disabled={pending}
               className="inline-flex min-h-12 flex-1 items-center justify-center rounded-xl border border-stone-300 bg-white px-4 text-base font-semibold text-stone-800 disabled:opacity-60"
+              data-testid="pick-cancel"
               onClick={() => {
                 startTransition(() => {
                   collapseEditor();

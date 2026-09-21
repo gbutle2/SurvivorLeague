@@ -4,11 +4,11 @@ import { describe, it } from "node:test";
 import {
   defaultPickEditorExpanded,
   formatPickDeadlineLine,
-  isExistingPickLocked,
   isGameUnlocked,
+  resolveAuthoritativePickGame,
+  resolveExistingPickLockState,
   resolvePickEditorMode,
 } from "./eligibility.ts";
-import { buildPickGameOptions } from "../nfl/schedule-query.ts";
 
 const futureKickoff = "2026-09-27T20:05:00.000Z"; // Sun Sep 27 ~3:05 PM CT
 const pastKickoff = "2026-09-18T00:15:00.000Z";
@@ -17,22 +17,10 @@ const nowAfterPast = Date.parse("2026-09-18T12:00:00.000Z");
 
 const sfGame = {
   id: "g-sf",
+  status: "scheduled",
+  scheduled_kickoff_at: futureKickoff,
   home_team_id: "sf",
   away_team_id: "lar",
-  scheduled_kickoff_at: futureKickoff,
-  status: "scheduled",
-  home: {
-    id: "sf",
-    abbreviation: "SF",
-    city: "San Francisco",
-    name: "49ers",
-  },
-  away: {
-    id: "lar",
-    abbreviation: "LAR",
-    city: "Los Angeles",
-    name: "Rams",
-  },
 };
 
 describe("isGameUnlocked", () => {
@@ -56,181 +44,155 @@ describe("isGameUnlocked", () => {
   });
 });
 
-describe("isExistingPickLocked", () => {
-  it("keeps a future SF pick unlocked on the Monday before kickoff", () => {
-    const options = buildPickGameOptions({
+describe("resolveAuthoritativePickGame", () => {
+  it("prefers game_id over team matching", () => {
+    const other = {
+      id: "g-other",
+      status: "scheduled",
+      scheduled_kickoff_at: futureKickoff,
+      home_team_id: "sf",
+      away_team_id: "sea",
+    };
+    const resolved = resolveAuthoritativePickGame({
+      pick: { team_id: "sf", game_id: "g-sf" },
+      games: [other, sfGame],
+    });
+    assert.equal(resolved.game?.id, "g-sf");
+    assert.equal(resolved.unresolved, false);
+  });
+
+  it("marks unresolved when game_id is missing from the schedule load", () => {
+    const resolved = resolveAuthoritativePickGame({
+      pick: { team_id: "sf", game_id: "g-missing" },
       games: [sfGame],
-      usedTeamIds: new Set(),
-      retainTeamId: "sf",
-      now: new Date(nowBeforeFuture),
     });
-    assert.equal(
-      isExistingPickLocked({
-        selectedTeamId: "sf",
-        options,
-        nowMs: nowBeforeFuture,
-      }),
-      false,
-    );
+    assert.equal(resolved.game, null);
+    assert.equal(resolved.unresolved, true);
   });
 
-  it("locks a past-kickoff pick using the option timestamp", () => {
-    const options = buildPickGameOptions({
-      games: [{ ...sfGame, scheduled_kickoff_at: pastKickoff }],
-      usedTeamIds: new Set(),
-      now: new Date(nowAfterPast),
-    });
-    assert.equal(
-      isExistingPickLocked({
-        selectedTeamId: "sf",
-        options,
-        nowMs: nowAfterPast,
-      }),
-      true,
-    );
-  });
-
-  it("does not treat a missing option as kickoff-passed", () => {
-    const options = buildPickGameOptions({
+  it("falls back to team match for legacy null game_id", () => {
+    const resolved = resolveAuthoritativePickGame({
+      pick: { team_id: "sf", game_id: null },
       games: [sfGame],
-      usedTeamIds: new Set(),
-      now: new Date(nowBeforeFuture),
     });
-    assert.equal(
-      isExistingPickLocked({
-        selectedTeamId: "gone",
-        options,
-        nowMs: nowBeforeFuture,
-      }),
-      false,
-    );
-  });
-
-  it("uses authoritative selectedGame when the option is absent", () => {
-    assert.equal(
-      isExistingPickLocked({
-        selectedTeamId: "sf",
-        options: [],
-        selectedGame: {
-          status: "scheduled",
-          scheduled_kickoff_at: pastKickoff,
-        },
-        nowMs: nowAfterPast,
-      }),
-      true,
-    );
-    assert.equal(
-      isExistingPickLocked({
-        selectedTeamId: "sf",
-        options: [],
-        selectedGame: {
-          status: "scheduled",
-          scheduled_kickoff_at: futureKickoff,
-        },
-        nowMs: nowBeforeFuture,
-      }),
-      false,
-    );
-  });
-
-  it("distinguishes missing option from passed kickoff", () => {
-    const missing = isExistingPickLocked({
-      selectedTeamId: "missing",
-      options: [],
-      nowMs: nowBeforeFuture,
-    });
-    const passed = isExistingPickLocked({
-      selectedTeamId: "sf",
-      options: [],
-      selectedGame: {
-        status: "scheduled",
-        scheduled_kickoff_at: pastKickoff,
-      },
-      nowMs: nowAfterPast,
-    });
-    assert.equal(missing, false);
-    assert.equal(passed, true);
+    assert.equal(resolved.game?.id, "g-sf");
+    assert.equal(resolved.unresolved, false);
   });
 });
 
-describe("retainTeamId / reuse filtering", () => {
-  it("does not mark the current-week team as used against itself", () => {
-    const options = buildPickGameOptions({
-      games: [sfGame],
-      usedTeamIds: new Set(["sf", "kc"]),
-      retainTeamId: "sf",
-      now: new Date(nowBeforeFuture),
-    });
-    const sf = options.find((o) => o.teamId === "sf");
-    assert.equal(sf?.used, false);
+describe("resolveExistingPickLockState", () => {
+  it("returns editable for a future SF kickoff on Monday", () => {
+    assert.equal(
+      resolveExistingPickLockState({
+        hasExistingPick: true,
+        weekStatus: "open",
+        authoritativeGame: sfGame,
+        gameUnresolved: false,
+        nowMs: nowBeforeFuture,
+      }),
+      "editable",
+    );
   });
 
-  it("keeps teams used in other weeks unavailable", () => {
-    const options = buildPickGameOptions({
-      games: [sfGame],
-      usedTeamIds: new Set(["lar"]),
-      retainTeamId: "sf",
-      now: new Date(nowBeforeFuture),
-    });
-    assert.equal(options.find((o) => o.teamId === "lar")?.used, true);
-    assert.equal(options.find((o) => o.teamId === "sf")?.used, false);
+  it("returns locked after kickoff", () => {
+    assert.equal(
+      resolveExistingPickLockState({
+        hasExistingPick: true,
+        weekStatus: "open",
+        authoritativeGame: { ...sfGame, scheduled_kickoff_at: pastKickoff },
+        gameUnresolved: false,
+        nowMs: nowAfterPast,
+      }),
+      "locked",
+    );
+  });
+
+  it("returns locked when the week is closed", () => {
+    assert.equal(
+      resolveExistingPickLockState({
+        hasExistingPick: true,
+        weekStatus: "final",
+        authoritativeGame: sfGame,
+        gameUnresolved: false,
+        nowMs: nowBeforeFuture,
+      }),
+      "locked",
+    );
+  });
+
+  it("returns unavailable when the authoritative game cannot be resolved", () => {
+    assert.equal(
+      resolveExistingPickLockState({
+        hasExistingPick: true,
+        weekStatus: "open",
+        authoritativeGame: null,
+        gameUnresolved: true,
+        nowMs: nowBeforeFuture,
+      }),
+      "unavailable",
+    );
+  });
+
+  it("does not treat missing schedule as editable", () => {
+    assert.notEqual(
+      resolveExistingPickLockState({
+        hasExistingPick: true,
+        weekStatus: "open",
+        authoritativeGame: null,
+        gameUnresolved: true,
+        nowMs: nowBeforeFuture,
+      }),
+      "editable",
+    );
+  });
+
+  it("ignores filtered options — lock state uses authoritative game only", () => {
+    // Even if options would omit SF, resolved game keeps editable.
+    assert.equal(
+      resolveExistingPickLockState({
+        hasExistingPick: true,
+        weekStatus: "open",
+        authoritativeGame: sfGame,
+        gameUnresolved: false,
+        nowMs: nowBeforeFuture,
+      }),
+      "editable",
+    );
   });
 });
 
-describe("pick editor expand defaults", () => {
+describe("pick editor modes", () => {
+  it("maps unverified existing picks to unverified mode", () => {
+    assert.equal(
+      resolvePickEditorMode({
+        hasExistingPick: true,
+        existingPickState: "unavailable",
+        noEligibleGames: false,
+      }),
+      "unverified",
+    );
+    assert.equal(
+      defaultPickEditorExpanded("unverified"),
+      false,
+    );
+  });
+
   it("defaults existing editable picks to collapsed", () => {
     assert.equal(
       defaultPickEditorExpanded(
         resolvePickEditorMode({
           hasExistingPick: true,
-          existingPickLocked: false,
+          existingPickState: "editable",
           noEligibleGames: false,
         }),
       ),
       false,
     );
-  });
-
-  it("defaults locked/final picks to collapsed", () => {
-    assert.equal(
-      defaultPickEditorExpanded(
-        resolvePickEditorMode({
-          hasExistingPick: true,
-          existingPickLocked: true,
-          noEligibleGames: false,
-        }),
-      ),
-      false,
-    );
-  });
-
-  it("defaults no-pick to expanded", () => {
-    assert.equal(
-      defaultPickEditorExpanded(
-        resolvePickEditorMode({
-          hasExistingPick: false,
-          existingPickLocked: false,
-          noEligibleGames: false,
-        }),
-      ),
-      true,
-    );
-  });
-
-  it("defaults unavailable schedule to collapsed informational mode", () => {
-    const mode = resolvePickEditorMode({
-      hasExistingPick: false,
-      existingPickLocked: false,
-      noEligibleGames: true,
-      scheduleUnavailable: true,
-    });
-    assert.equal(mode, "unavailable");
-    assert.equal(defaultPickEditorExpanded(mode), false);
   });
 });
 
 describe("formatPickDeadlineLine", () => {
-  it("uses a single editable/locked line without duplicating kickoff copy", () => {
+  it("uses a single editable/locked line", () => {
     const formatKickoff = () => "Sun, Sep 27 at 3:05 PM CDT";
     assert.equal(
       formatPickDeadlineLine({
@@ -239,14 +201,6 @@ describe("formatPickDeadlineLine", () => {
         formatKickoff,
       }),
       "Editable until Sun, Sep 27 at 3:05 PM CDT",
-    );
-    assert.equal(
-      formatPickDeadlineLine({
-        locked: true,
-        kickoffAt: futureKickoff,
-        formatKickoff,
-      }),
-      "Locked at kickoff · Sun, Sep 27 at 3:05 PM CDT",
     );
   });
 });

@@ -212,4 +212,6 @@ export function buildPickGameOptions(args: {
 export {
   isExistingPickLocked,
   isGameUnlocked,
+  resolveAuthoritativePickGame,
+  resolveExistingPickLockState,
 } from "../picks/eligibility.ts";

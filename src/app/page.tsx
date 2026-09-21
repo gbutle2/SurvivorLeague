@@ -21,10 +21,14 @@ import { isCommissioner, loadLeagueContext } from "@/lib/league/context";
 import { resolveWeeklyPickDisplayState } from "@/lib/dashboard/weekly-pick-status";
 import {
   buildPickGameOptions,
-  isExistingPickLocked,
   loadPlayoffRoundSignals,
   loadRegularWeekSignals,
 } from "@/lib/nfl/schedule-query";
+import {
+  resolveAuthoritativePickGame,
+  resolveExistingPickLockState,
+} from "@/lib/picks/eligibility";
+import { buildSavedPickSummary } from "@/lib/picks/saved-summary";
 import { usedTeamIds } from "@/lib/picks/used-teams";
 import { createClient } from "@/lib/supabase/server";
 import { formatCentralDateTime } from "@/lib/time/chicago";
@@ -106,7 +110,7 @@ export default async function HomePage({
       weekIds.length
         ? supabase
             .from("picks")
-            .select("id, week_id, team_id, result")
+            .select("id, week_id, team_id, result, game_id")
             .eq("user_id", context.userId)
             .in("week_id", weekIds)
         : Promise.resolve({ data: [], error: null }),
@@ -329,7 +333,6 @@ export default async function HomePage({
           teams={[]}
           initialTeamId={null}
           weekLabel={selectedWeek.label}
-          locked={false}
           scheduleUnavailable
           lastSyncLabel="never"
           nowMs={renderedAtMs}
@@ -420,25 +423,45 @@ export default async function HomePage({
         usedTeamIds: used,
         retainTeamId: existingPick?.team_id ?? null,
       });
-      const selectedGame = existingPick
-        ? (gameRows.find(
-            (game) =>
-              game.home_team_id === existingPick.team_id ||
-              game.away_team_id === existingPick.team_id,
-          ) ?? null)
-        : null;
-      const allLocked = options.length === 0 || options.every((o) => o.locked);
-      const existingPickLocked = isExistingPickLocked({
-        selectedTeamId: existingPick?.team_id ?? null,
-        options,
-        selectedGame: selectedGame
-          ? {
-              status: selectedGame.status,
-              scheduled_kickoff_at: selectedGame.scheduled_kickoff_at,
-            }
-          : null,
-          nowMs: renderedAtMs,
+
+      const { game: authoritativeGame, unresolved: gameUnresolved } =
+        resolveAuthoritativePickGame({
+          pick: existingPick
+            ? {
+                team_id: existingPick.team_id,
+                game_id: existingPick.game_id ?? null,
+              }
+            : null,
+          games: gameRows,
+        });
+
+      const existingPickState = resolveExistingPickLockState({
+        hasExistingPick: Boolean(existingPick),
+        weekStatus: selectedWeek.status,
+        authoritativeGame,
+        gameUnresolved,
+        nowMs: renderedAtMs,
       });
+
+      const fullAuthoritativeGame = authoritativeGame
+        ? (gameRows.find((game) => game.id === authoritativeGame.id) ?? null)
+        : null;
+
+      const savedSummary = existingPick
+        ? buildSavedPickSummary({
+            teamId: existingPick.team_id,
+            game: fullAuthoritativeGame,
+            team: (() => {
+              for (const game of gameRows) {
+                if (game.home.id === existingPick.team_id) return game.home;
+                if (game.away.id === existingPick.team_id) return game.away;
+              }
+              return null;
+            })(),
+          })
+        : null;
+
+      const allLocked = options.length === 0 || options.every((o) => o.locked);
       const syncLabel = lastSyncResult.data?.completed_at
         ? formatCentralDateTime(lastSyncResult.data.completed_at)
         : "never";
@@ -461,11 +484,12 @@ export default async function HomePage({
             teams={options}
             initialTeamId={existingPick?.team_id ?? null}
             weekLabel={selectedWeek.label}
-            locked={existingPickLocked}
+            existingPickState={existingPickState}
             noEligibleGames={allLocked && !existingPick}
             lastSyncLabel={syncLabel}
             nowMs={renderedAtMs}
             pickResult={existingPick?.result ?? null}
+            savedSummary={savedSummary}
           />
         );
       }

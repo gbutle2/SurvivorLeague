@@ -112,56 +112,52 @@ describe("buildPickGameOptions lock rules", () => {
 });
 
 describe("isExistingPickLocked", () => {
-  it("locks the entire form when the selected Thursday team has kicked off", () => {
-    const options = buildPickGameOptions({
-      games: sampleGames(),
-      usedTeamIds: new Set(),
-      now: afterThursday,
-    });
+  it("locks when the authoritative game has kicked off", () => {
     assert.equal(
-      isExistingPickLocked({ selectedTeamId: "kc", options }),
+      isExistingPickLocked({
+        selectedTeamId: "kc",
+        selectedGame: {
+          status: "scheduled",
+          scheduled_kickoff_at: thursdayKickoff,
+        },
+        gameUnresolved: false,
+        nowMs: afterThursday.getTime(),
+      }),
       true,
-    );
-    assert.equal(
-      options.some((o) => !o.locked),
-      true,
-      "Sunday games remain unlocked for players without a locked pick",
     );
   });
 
-  it("allows edits when the existing Sunday pick has not kicked off", () => {
-    const options = buildPickGameOptions({
-      games: sampleGames(),
-      usedTeamIds: new Set(),
-      now: beforeSunday,
-    });
+  it("allows edits when the authoritative Sunday game has not kicked off", () => {
     assert.equal(
-      isExistingPickLocked({ selectedTeamId: "det", options }),
+      isExistingPickLocked({
+        selectedTeamId: "det",
+        selectedGame: {
+          status: "scheduled",
+          scheduled_kickoff_at: sundayKickoff,
+        },
+        gameUnresolved: false,
+        nowMs: beforeSunday.getTime(),
+      }),
       false,
     );
   });
 
   it("does not lock when there is no existing pick", () => {
-    const options = buildPickGameOptions({
-      games: sampleGames(),
-      usedTeamIds: new Set(),
-      now: afterThursday,
-    });
     assert.equal(
-      isExistingPickLocked({ selectedTeamId: null, options }),
+      isExistingPickLocked({ selectedTeamId: null }),
       false,
     );
   });
 
-  it("treats a missing selected option as unlocked without game metadata", () => {
-    const options = buildPickGameOptions({
-      games: sampleGames(),
-      usedTeamIds: new Set(),
-      now: afterThursday,
-    });
+  it("treats unresolved picks without game metadata as non-editable", () => {
     assert.equal(
-      isExistingPickLocked({ selectedTeamId: "gone", options }),
-      false,
+      isExistingPickLocked({
+        selectedTeamId: "gone",
+        options: [],
+        gameUnresolved: true,
+        nowMs: afterThursday.getTime(),
+      }),
+      true,
     );
   });
 
@@ -174,9 +170,26 @@ describe("isExistingPickLocked", () => {
           status: "scheduled",
           scheduled_kickoff_at: thursdayKickoff,
         },
+        gameUnresolved: false,
         nowMs: afterThursday.getTime(),
       }),
       true,
+    );
+  });
+
+  it("allows edits when selectedGame is future even if options omit the team", () => {
+    assert.equal(
+      isExistingPickLocked({
+        selectedTeamId: "det",
+        options: [],
+        selectedGame: {
+          status: "scheduled",
+          scheduled_kickoff_at: sundayKickoff,
+        },
+        gameUnresolved: false,
+        nowMs: beforeSunday.getTime(),
+      }),
+      false,
     );
   });
 });
