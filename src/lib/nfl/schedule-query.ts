@@ -2,6 +2,8 @@ export type GameWeekSignal = {
   week_number: number;
   has_non_terminal_game: boolean;
   has_future_kickoff: boolean;
+  /** True when any game in the week has kicked off or reached in_progress/final. */
+  has_started_game: boolean;
 };
 
 export type GameRoundSignal = {
@@ -49,7 +51,11 @@ export async function loadRegularWeekSignals(
   const now = Date.now();
   const byWeek = new Map<
     number,
-    { has_non_terminal_game: boolean; has_future_kickoff: boolean }
+    {
+      has_non_terminal_game: boolean;
+      has_future_kickoff: boolean;
+      has_started_game: boolean;
+    }
   >();
 
   for (const row of data ?? []) {
@@ -58,16 +64,25 @@ export async function loadRegularWeekSignals(
     const entry = byWeek.get(week) ?? {
       has_non_terminal_game: false,
       has_future_kickoff: false,
+      has_started_game: false,
     };
     const status = String(row.status);
+    const kickoffMs = new Date(String(row.scheduled_kickoff_at)).getTime();
     if (status !== "final" && status !== "canceled") {
       entry.has_non_terminal_game = true;
     }
     if (
       (status === "scheduled" || status === "postponed") &&
-      new Date(String(row.scheduled_kickoff_at)).getTime() > now
+      kickoffMs > now
     ) {
       entry.has_future_kickoff = true;
+    }
+    if (
+      status === "final" ||
+      status === "in_progress" ||
+      ((status === "scheduled" || status === "postponed") && kickoffMs <= now)
+    ) {
+      entry.has_started_game = true;
     }
     byWeek.set(week, entry);
   }

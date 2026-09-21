@@ -5,6 +5,8 @@ export type GameWeekSignal = {
   week_number: number;
   has_non_terminal_game: boolean;
   has_future_kickoff: boolean;
+  /** Optional; used by live standings authority, ignored for pick-week eligibility. */
+  has_started_game?: boolean;
 };
 
 export type CurrentWeekResolution<T extends WeekLike> =

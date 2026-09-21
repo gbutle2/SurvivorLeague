@@ -19,7 +19,12 @@ import {
 } from "@/lib/dashboard/week-history";
 import { isCommissioner, loadLeagueContext } from "@/lib/league/context";
 import { resolveWeeklyPickDisplayState } from "@/lib/dashboard/weekly-pick-status";
-import { resolveStandingsView } from "@/lib/dashboard/standings-view";
+import {
+  resolveLatestSettledStandingsWeekNumber,
+  resolveLiveStandingsWeekNumber,
+  resolveStandingsView,
+  type StandingsWeekAuthority,
+} from "@/lib/dashboard/standings-view";
 import {
   buildPickGameOptions,
   loadPlayoffRoundSignals,
@@ -32,6 +37,7 @@ import {
 import { buildSavedPickSummary } from "@/lib/picks/saved-summary";
 import { usedTeamIds } from "@/lib/picks/used-teams";
 import { createClient } from "@/lib/supabase/server";
+import type { PickResult } from "@/lib/database.types";
 import { formatCentralDateTime } from "@/lib/time/chicago";
 import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
@@ -94,10 +100,11 @@ export default async function HomePage({
       memberIds.length
         ? supabase.from("profiles").select("id, display_name").in("id", memberIds)
         : Promise.resolve({ data: [], error: null }),
+      // Standings-safe columns only — never load peer team_id/game_id here.
       weekIds.length
         ? supabase
             .from("picks")
-            .select("user_id, week_id, team_id, result")
+            .select("user_id, week_id, result")
             .in("week_id", weekIds)
         : Promise.resolve({ data: [], error: null }),
       playoffRoundIds.length
@@ -152,6 +159,38 @@ export default async function HomePage({
     };
   });
 
+  const pickRows = picksResult.data ?? [];
+  const pendingWeekIds = new Set(
+    pickRows
+      .filter((pick) => pick.result === "pending")
+      .map((pick) => pick.week_id),
+  );
+
+  const weekAuthorities: StandingsWeekAuthority[] = competitionWeeks.map(
+    (week) => {
+      const signal = signalByWeek.get(week.week_number);
+      return {
+        weekNumber: week.week_number,
+        status: week.status,
+        signal: signal
+          ? {
+              has_non_terminal_game: signal.has_non_terminal_game,
+              has_future_kickoff: signal.has_future_kickoff,
+              has_started_game: Boolean(signal.has_started_game),
+            }
+          : null,
+        hasPendingPickResults: pendingWeekIds.has(week.id),
+      };
+    },
+  );
+
+  const liveStandingsWeekNumber =
+    resolveLiveStandingsWeekNumber(weekAuthorities);
+  const latestSettledWeekNumber =
+    resolveLatestSettledStandingsWeekNumber(weekAuthorities);
+
+  // UI default / pick-eligibility week (earliest future kickoff). Must not
+  // alone decide the live standings cutoff.
   const current = resolveCurrentWeekFromGames(
     competitionWeeks,
     signalsResult.signals,
@@ -185,8 +224,9 @@ export default async function HomePage({
     selectedWeekNumber != null
       ? resolveStandingsView({
           selectedWeekNumber,
-          effectiveCurrentWeekNumber,
-          weeks: scoredWeeks,
+          liveStandingsWeekNumber,
+          latestSettledWeekNumber,
+          weeks: weekAuthorities,
         })
       : {
           standingsThroughWeek: null as number | null,
@@ -247,9 +287,26 @@ export default async function HomePage({
     },
   );
 
-  const selectedPicks = selectedWeek
-    ? (picksResult.data ?? []).filter((pick) => pick.week_id === selectedWeek.id)
-    : [];
+  const visibleSelectedPicksResult = selectedWeek
+    ? await supabase
+        .from("picks")
+        .select("user_id, week_id, team_id, result")
+        .eq("week_id", selectedWeek.id)
+    : {
+        data: [] as Array<{
+          user_id: string;
+          week_id: string;
+          team_id: string;
+          result: PickResult;
+        }>,
+        error: null,
+      };
+
+  if (visibleSelectedPicksResult.error) {
+    return <DashboardError />;
+  }
+
+  const selectedPicks = visibleSelectedPicksResult.data ?? [];
   const selectedTeamIds = [
     ...new Set(
       selectedPicks
