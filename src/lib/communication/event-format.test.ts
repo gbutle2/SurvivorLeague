@@ -107,6 +107,20 @@ describe("formatLeagueEvent privacy", () => {
       "Commissioner changed Geoff's Week 4 pick from the Bills to the Ravens.",
     );
   });
+
+  it("includes nicknames after reveal for pick updated", () => {
+    assert.equal(
+      formatLeagueEvent(
+        event({
+          event_type: "pick_updated",
+          payload: { week_number: 4, team_id: "buf-id" },
+          is_revealed: true,
+        }),
+        teams,
+      ),
+      "Geoff picked the Bills for Week 4.",
+    );
+  });
 });
 
 describe("formatLeagueEvent other types", () => {

@@ -649,6 +649,9 @@ export async function syncNflSchedule(
 
     await applyAutomaticPickResults(client, seasonYear);
     await reconcileRegularWeekFinalStatuses(client, seasonYear);
+    // Kickoff reveal is not driven by wall-clock alone; sync is the established
+    // schedule authority and must promote eligible pick activity after game upserts.
+    await client.query(`SELECT public.reveal_eligible_pick_events()`);
 
     warningSummary =
       [...rejects.map((r) => r.reason), ...warnings]

@@ -154,7 +154,7 @@ export async function loadConversationMessagesAction(
   const { data, error } = await auth.supabase
     .from("messages")
     .select(
-      "id, conversation_id, league_id, kind, author_user_id, author_display_name, body, league_event_id, created_at, edited_at, deleted_at, idempotency_key",
+      "id, conversation_id, league_id, kind, author_user_id, author_display_name, body, league_event_id, created_at, edited_at, deleted_at, client_idempotency_key, system_idempotency_key",
     )
     .eq("conversation_id", conversationId)
     .eq("league_id", auth.leagueId)

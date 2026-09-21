@@ -636,7 +636,8 @@ export type Database = {
           created_at: string;
           edited_at: string | null;
           deleted_at: string | null;
-          idempotency_key: string | null;
+          client_idempotency_key: string | null;
+          system_idempotency_key: string | null;
         };
         Insert: {
           id?: string;
@@ -650,7 +651,8 @@ export type Database = {
           created_at?: string;
           edited_at?: string | null;
           deleted_at?: string | null;
-          idempotency_key?: string | null;
+          client_idempotency_key?: string | null;
+          system_idempotency_key?: string | null;
         };
         Update: {
           id?: string;
@@ -664,7 +666,8 @@ export type Database = {
           created_at?: string;
           edited_at?: string | null;
           deleted_at?: string | null;
-          idempotency_key?: string | null;
+          client_idempotency_key?: string | null;
+          system_idempotency_key?: string | null;
         };
         Relationships: [];
       };
@@ -880,7 +883,8 @@ export type Database = {
           created_at: string;
           edited_at: string | null;
           deleted_at: string | null;
-          idempotency_key: string | null;
+          client_idempotency_key: string | null;
+          system_idempotency_key: string | null;
         };
       };
       edit_own_message: {
@@ -897,7 +901,8 @@ export type Database = {
           created_at: string;
           edited_at: string | null;
           deleted_at: string | null;
-          idempotency_key: string | null;
+          client_idempotency_key: string | null;
+          system_idempotency_key: string | null;
         };
       };
       soft_delete_own_message: {
@@ -914,8 +919,13 @@ export type Database = {
           created_at: string;
           edited_at: string | null;
           deleted_at: string | null;
-          idempotency_key: string | null;
+          client_idempotency_key: string | null;
+          system_idempotency_key: string | null;
         };
+      };
+      reveal_eligible_pick_events: {
+        Args: Record<string, never>;
+        Returns: number;
       };
       mark_conversation_read: {
         Args: {

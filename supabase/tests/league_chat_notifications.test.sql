@@ -197,7 +197,7 @@ SELECT ok(
 );
 SELECT tests.clear_auth();
 UPDATE chat_ids SET msg_id = (
-  SELECT id FROM public.messages WHERE idempotency_key = 'idem-dm-1' LIMIT 1
+  SELECT id FROM public.messages WHERE client_idempotency_key = 'idem-dm-1' LIMIT 1
 );
 SELECT tests.authenticate_as((SELECT p1 FROM chat_ids));
 SELECT ok((SELECT msg_id FROM chat_ids) IS NOT NULL, 'DM message persisted');
