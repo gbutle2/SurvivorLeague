@@ -174,7 +174,7 @@ export default async function PickPage({
   const [{ data: seasonPicks }, { data: games }] = await Promise.all([
     supabase
       .from("picks")
-      .select("id, week_id, team_id")
+      .select("id, week_id, team_id, result")
       .eq("user_id", context.userId)
       .in(
         "week_id",
@@ -231,13 +231,22 @@ export default async function PickPage({
     };
   });
 
+  const existingPick =
+    (seasonPicks ?? []).find((pick) => pick.week_id === week.id) ?? null;
+
   const pickOptions = buildPickGameOptions({
     games: gameRows,
     usedTeamIds: used,
+    retainTeamId: existingPick?.team_id ?? null,
   });
 
-  const existingPick =
-    (seasonPicks ?? []).find((pick) => pick.week_id === week.id) ?? null;
+  const selectedGame = existingPick
+    ? (gameRows.find(
+        (game) =>
+          game.home_team_id === existingPick.team_id ||
+          game.away_team_id === existingPick.team_id,
+      ) ?? null)
+    : null;
 
   const syncLabel = lastSync?.completed_at
     ? formatCentralDateTime(lastSync.completed_at)
@@ -248,6 +257,13 @@ export default async function PickPage({
   const existingPickLocked = isExistingPickLocked({
     selectedTeamId: existingPick?.team_id ?? null,
     options: pickOptions,
+    selectedGame: selectedGame
+      ? {
+          status: selectedGame.status,
+          scheduled_kickoff_at: selectedGame.scheduled_kickoff_at,
+        }
+      : null,
+    nowMs: renderedAtMs,
   });
 
   return (
@@ -260,19 +276,17 @@ export default async function PickPage({
         />
       </div>
       <PickForm
+        key={week.id}
         weekId={week.id}
+        weekNumber={week.week_number}
         teams={pickOptions}
         initialTeamId={existingPick?.team_id ?? null}
         weekLabel={week.label}
-        deadlineLabel={
-          existingPickLocked
-            ? "Your pick locked when your selected team’s game began (Central Time)."
-            : "Locks at your selected team’s kickoff (Central Time)"
-        }
         locked={existingPickLocked}
         noEligibleGames={allLocked && !existingPick}
         lastSyncLabel={syncLabel}
         nowMs={renderedAtMs}
+        pickResult={existingPick?.result ?? null}
       />
     </AppShell>
   );

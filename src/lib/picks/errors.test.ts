@@ -8,23 +8,65 @@ import {
 } from "./errors.ts";
 
 describe("mapPickMutationError", () => {
-  it("maps reused-team errors", () => {
-    assert.match(
-      mapPickMutationError({
-        message: "Team already used by this player in the same season",
-        code: "23514",
-      }),
-      /already used/i,
+  it("maps reused-team errors with the conflict week when known", () => {
+    assert.equal(
+      mapPickMutationError(
+        {
+          message: "Team already used by this player in the same season",
+          code: "23514",
+        },
+        { conflictWeekNumber: 2 },
+      ),
+      "You already used this team in Week 2.",
     );
   });
 
-  it("maps deadline / RLS lock errors", () => {
+  it("maps kickoff unlock failures precisely", () => {
+    assert.equal(
+      mapPickMutationError({
+        message: "pick_team_plays_unlocked_in_week failed: kickoff passed",
+      }),
+      "Your pick is locked because this game has started.",
+    );
+  });
+
+  it("does not claim kickoff passed for generic RLS failures", () => {
+    const message = mapPickMutationError({
+      message: "new row violates row-level security policy",
+      code: "42501",
+    });
+    assert.match(message, /refresh and try again/i);
+    assert.doesNotMatch(message, /kickoff/i);
+    assert.doesNotMatch(message, /locked or not selectable/i);
+  });
+
+  it("maps closed-week failures", () => {
+    assert.equal(
+      mapPickMutationError(
+        { message: "week_allows_player_picks returned false" },
+        { weekLabel: "Week 4" },
+      ),
+      "Week 4 is closed for picks.",
+    );
+  });
+
+  it("maps unscheduled team failures", () => {
+    assert.equal(
+      mapPickMutationError(
+        { message: "no scheduled game / bye" },
+        { weekNumber: 3 },
+      ),
+      "This team is not scheduled for Week 3.",
+    );
+  });
+
+  it("maps concurrent pick conflicts", () => {
     assert.match(
       mapPickMutationError({
-        message: "new row violates row-level security policy",
-        code: "42501",
+        message: 'duplicate key value violates unique constraint "picks_unique_week_user"',
+        code: "23505",
       }),
-      /locked/i,
+      /refresh and try again/i,
     );
   });
 });

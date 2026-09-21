@@ -5,8 +5,17 @@ type DbErrorLike = {
   hint?: string;
 };
 
-/** Map Supabase/Postgres errors to safe player-facing messages. */
-export function mapPickMutationError(error: DbErrorLike | null | undefined): string {
+export type PickMutationContext = {
+  weekLabel?: string;
+  weekNumber?: number;
+  conflictWeekNumber?: number | null;
+};
+
+/** Map Supabase/Postgres errors to precise, non-conflated player-facing messages. */
+export function mapPickMutationError(
+  error: DbErrorLike | null | undefined,
+  context: PickMutationContext = {},
+): string {
   if (!error) {
     return "Something went wrong while saving your pick. Please try again.";
   }
@@ -19,31 +28,51 @@ export function mapPickMutationError(error: DbErrorLike | null | undefined): str
   if (
     haystack.includes("team already used") ||
     haystack.includes("unique_team") ||
-    haystack.includes("check_violation")
+    (error.code === "23514" && haystack.includes("team"))
   ) {
-    return "You already used that team earlier this season. Choose a different team.";
+    if (context.conflictWeekNumber != null) {
+      return `You already used this team in Week ${context.conflictWeekNumber}.`;
+    }
+    return "You already used this team in another week.";
   }
 
   if (
-    haystack.includes("week_is_unlocked") ||
-    haystack.includes("week_is_effective_current") ||
     haystack.includes("pick_team_plays_unlocked") ||
     haystack.includes("team_regular_game_is_unlocked") ||
-    haystack.includes("locks_at") ||
-    haystack.includes("kickoff") ||
-    haystack.includes("row-level security") ||
-    haystack.includes("violates row-level security") ||
-    error.code === "42501"
+    haystack.includes("kickoff")
   ) {
-    return "That game is locked (kickoff has passed) or is not selectable. Choose another team.";
+    return "Your pick is locked because this game has started.";
+  }
+
+  if (
+    haystack.includes("week_allows_player_picks") ||
+    haystack.includes("week_is_unlocked") ||
+    haystack.includes("week_is_effective_current")
+  ) {
+    const label = context.weekLabel ?? "This week";
+    return `${label} is closed for picks.`;
+  }
+
+  if (haystack.includes("no scheduled") || haystack.includes("bye")) {
+    return context.weekNumber != null
+      ? `This team is not scheduled for Week ${context.weekNumber}.`
+      : "This team is not scheduled for the selected week.";
   }
 
   if (
     haystack.includes("picks_unique_week_user") ||
-    haystack.includes("duplicate key") ||
-    error.code === "23505"
+    (error.code === "23505" && haystack.includes("duplicate key"))
   ) {
-    return "You already have a pick for this week. Refresh and try updating it.";
+    return "Your pick changed while you were editing. Refresh and try again.";
+  }
+
+  if (
+    haystack.includes("row-level security") ||
+    haystack.includes("violates row-level security") ||
+    error.code === "42501"
+  ) {
+    // RLS can mean locked week, started game, or auth — do not claim kickoff.
+    return "Your pick could not be saved. Refresh and try again.";
   }
 
   if (haystack.includes("network") || haystack.includes("fetch failed")) {

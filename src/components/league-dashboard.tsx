@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { DASHBOARD_SECTION_ORDER } from "@/lib/dashboard/section-order";
 import type { Standing } from "@/lib/dashboard/standings";
 
 export type WeeklyHistoryRow = {
@@ -39,9 +40,18 @@ export function LeagueDashboard({
 
   return (
     <>
-      <section className="mb-5">{weekSelector}</section>
+      <section
+        className="mb-5"
+        data-dashboard-section={DASHBOARD_SECTION_ORDER[0]}
+      >
+        {weekSelector}
+      </section>
 
-      <section className="grid grid-cols-3 gap-2" aria-label="League summary">
+      <section
+        className="grid grid-cols-3 gap-2"
+        aria-label="League summary"
+        data-dashboard-section={DASHBOARD_SECTION_ORDER[1]}
+      >
         <div className="rounded-2xl border border-emerald-900/10 bg-emerald-950 p-3 text-emerald-50 shadow-sm">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-100/70">
             Leader
@@ -71,9 +81,10 @@ export function LeagueDashboard({
         </div>
       </section>
 
-      <section className="mt-6">{yourPick}</section>
-
-      <section className="mt-6">
+      <section
+        className="mt-6"
+        data-dashboard-section={DASHBOARD_SECTION_ORDER[2]}
+      >
         <div className="mb-3 flex items-end justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-800">
@@ -241,7 +252,10 @@ export function LeagueDashboard({
         </div>
       </section>
 
-      <section className="mt-6">
+      <section
+        className="mt-6"
+        data-dashboard-section={DASHBOARD_SECTION_ORDER[3]}
+      >
         <div className="mb-3">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-800">
             Selected week
@@ -350,6 +364,13 @@ export function LeagueDashboard({
             </div>
           </>
         )}
+      </section>
+
+      <section
+        className="mt-6"
+        data-dashboard-section={DASHBOARD_SECTION_ORDER[4]}
+      >
+        {yourPick}
       </section>
     </>
   );

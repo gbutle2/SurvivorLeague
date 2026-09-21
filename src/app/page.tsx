@@ -106,7 +106,7 @@ export default async function HomePage({
       weekIds.length
         ? supabase
             .from("picks")
-            .select("id, week_id, team_id")
+            .select("id, week_id, team_id, result")
             .eq("user_id", context.userId)
             .in("week_id", weekIds)
         : Promise.resolve({ data: [], error: null }),
@@ -308,6 +308,7 @@ export default async function HomePage({
     : [];
 
   // Your Pick controls for the selected week
+  const renderedAtMs = Date.parse(new Date().toISOString());
   let yourPickPanel = (
     <div className="rounded-2xl border border-stone-200 bg-white p-4 text-sm text-stone-600 shadow-sm">
       Select a week to manage your pick.
@@ -321,24 +322,29 @@ export default async function HomePage({
 
     if (!hasSchedule) {
       yourPickPanel = (
-        <StatusPanel title="Schedule unavailable" tone="warning">
-          <p>
-            Schedule data is not available for {selectedWeek.label} yet. Picks
-            open after the NFL schedule includes this week.
-          </p>
-        </StatusPanel>
+        <PickForm
+          key={selectedWeek.id}
+          weekId={selectedWeek.id}
+          weekNumber={selectedWeek.week_number}
+          teams={[]}
+          initialTeamId={null}
+          weekLabel={selectedWeek.label}
+          locked={false}
+          scheduleUnavailable
+          lastSyncLabel="never"
+          nowMs={renderedAtMs}
+        />
       );
     } else if (adminLocked) {
       const own = (ownPicksResult.data ?? []).find(
         (pick) => pick.week_id === selectedWeek.id,
       );
       yourPickPanel = (
-        <StatusPanel title="Week closed" tone="warning">
+        <StatusPanel title={`${selectedWeek.label} is closed`} tone="warning">
           <p>
-            {selectedWeek.label} is {selectedWeek.status}. Player picks are
-            read-only.
+            {selectedWeek.label} is closed for picks.
             {own
-              ? ` Your selection is saved.`
+              ? " Your selection is saved."
               : " You do not have a pick for this week."}
           </p>
         </StatusPanel>
@@ -404,18 +410,34 @@ export default async function HomePage({
         };
       });
 
-      const options = buildPickGameOptions({
-        games: gameRows,
-        usedTeamIds: used,
-      });
       const existingPick =
         (ownPicksResult.data ?? []).find(
           (pick) => pick.week_id === selectedWeek.id,
         ) ?? null;
+
+      const options = buildPickGameOptions({
+        games: gameRows,
+        usedTeamIds: used,
+        retainTeamId: existingPick?.team_id ?? null,
+      });
+      const selectedGame = existingPick
+        ? (gameRows.find(
+            (game) =>
+              game.home_team_id === existingPick.team_id ||
+              game.away_team_id === existingPick.team_id,
+          ) ?? null)
+        : null;
       const allLocked = options.length === 0 || options.every((o) => o.locked);
       const existingPickLocked = isExistingPickLocked({
         selectedTeamId: existingPick?.team_id ?? null,
         options,
+        selectedGame: selectedGame
+          ? {
+              status: selectedGame.status,
+              scheduled_kickoff_at: selectedGame.scheduled_kickoff_at,
+            }
+          : null,
+          nowMs: renderedAtMs,
       });
       const syncLabel = lastSyncResult.data?.completed_at
         ? formatCentralDateTime(lastSyncResult.data.completed_at)
@@ -433,19 +455,17 @@ export default async function HomePage({
       } else {
         yourPickPanel = (
           <PickForm
+            key={selectedWeek.id}
             weekId={selectedWeek.id}
+            weekNumber={selectedWeek.week_number}
             teams={options}
             initialTeamId={existingPick?.team_id ?? null}
             weekLabel={selectedWeek.label}
-            deadlineLabel={
-              existingPickLocked
-                ? "Your pick locked when your selected team’s game began (Central Time)."
-                : "Locks at your selected team’s kickoff (Central Time)"
-            }
             locked={existingPickLocked}
             noEligibleGames={allLocked && !existingPick}
             lastSyncLabel={syncLabel}
-            nowMs={Date.parse(new Date().toISOString())}
+            nowMs={renderedAtMs}
+            pickResult={existingPick?.result ?? null}
           />
         );
       }

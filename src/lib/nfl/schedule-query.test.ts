@@ -153,7 +153,7 @@ describe("isExistingPickLocked", () => {
     );
   });
 
-  it("treats a missing selected option as locked", () => {
+  it("treats a missing selected option as unlocked without game metadata", () => {
     const options = buildPickGameOptions({
       games: sampleGames(),
       usedTeamIds: new Set(),
@@ -161,7 +161,35 @@ describe("isExistingPickLocked", () => {
     });
     assert.equal(
       isExistingPickLocked({ selectedTeamId: "gone", options }),
+      false,
+    );
+  });
+
+  it("locks via selectedGame when the option is missing and kickoff passed", () => {
+    assert.equal(
+      isExistingPickLocked({
+        selectedTeamId: "gone",
+        options: [],
+        selectedGame: {
+          status: "scheduled",
+          scheduled_kickoff_at: thursdayKickoff,
+        },
+        nowMs: afterThursday.getTime(),
+      }),
       true,
     );
+  });
+});
+
+describe("retainTeamId", () => {
+  it("keeps the current-week team selectable even if listed in usedTeamIds", () => {
+    const options = buildPickGameOptions({
+      games: sampleGames(),
+      usedTeamIds: new Set(["det", "kc"]),
+      retainTeamId: "det",
+      now: beforeSunday,
+    });
+    assert.equal(options.find((o) => o.teamId === "det")?.used, false);
+    assert.equal(options.find((o) => o.teamId === "kc")?.used, true);
   });
 });

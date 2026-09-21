@@ -9,6 +9,7 @@ import {
   PICK_UPDATE_ZERO_ROW,
   requireMutationRow,
 } from "@/lib/mutations/result";
+import { isGameUnlocked } from "@/lib/picks/eligibility";
 import { mapPickMutationError } from "@/lib/picks/errors";
 import { setupSeasonBlocksPicks } from "@/lib/season/activation";
 import { createClient } from "@/lib/supabase/server";
@@ -73,15 +74,23 @@ export async function savePick(
     .maybeSingle();
 
   if (weekError || !week) {
-    return { ...empty, error: "That week is not available in this season." };
+    return {
+      ...empty,
+      error: "The schedule for the selected week is not available yet.",
+    };
   }
 
   if (week.status === "locked" || week.status === "final") {
     return {
       ...empty,
-      error: `${week.label} is ${week.status}. Picks cannot be changed.`,
+      error: `${week.label} is closed for picks.`,
     };
   }
+
+  const mapCtx = {
+    weekLabel: week.label,
+    weekNumber: week.week_number,
+  };
 
   const { data: team, error: teamError } = await supabase
     .from("teams")
@@ -107,10 +116,11 @@ export async function savePick(
   if (!game) {
     return {
       ...empty,
-      error: "That team is on bye or not scheduled this NFL week.",
+      error: `This team is not scheduled for ${week.label}.`,
     };
   }
 
+  const nowMs = Date.now();
   const teamLabel = `${team.city} ${team.name} (${team.abbreviation})`;
 
   const { data: existingPick, error: existingError } = await supabase
@@ -124,6 +134,95 @@ export async function savePick(
     return { ...empty, error: "Database unavailable. Could not load your pick." };
   }
 
+  // Same team already saved — success without a no-op RLS update.
+  if (existingPick && existingPick.team_id === teamId) {
+    revalidatePath("/pick");
+    revalidatePath("/");
+    revalidatePath("/availability");
+    return {
+      error: null,
+      success: `Saved ${teamLabel} for ${week.label}.`,
+      savedTeamId: teamId,
+      savedTeamLabel: teamLabel,
+    };
+  }
+
+  // Authoritative pre-checks (DB remains the final gate).
+  if (existingPick) {
+    const { data: existingGame } = await supabase
+      .from("games")
+      .select("id, scheduled_kickoff_at, status")
+      .eq("season_year", context.season.year)
+      .eq("season_type", "regular")
+      .eq("regular_week_number", week.week_number)
+      .neq("status", "canceled")
+      .or(
+        `home_team_id.eq.${existingPick.team_id},away_team_id.eq.${existingPick.team_id}`,
+      )
+      .maybeSingle();
+
+    if (
+      existingGame &&
+      !isGameUnlocked({
+        status: existingGame.status,
+        scheduledKickoffAt: existingGame.scheduled_kickoff_at,
+        nowMs,
+      })
+    ) {
+      return {
+        ...empty,
+        error: "Your pick is locked because this game has started.",
+      };
+    }
+  }
+
+  if (
+    !isGameUnlocked({
+      status: game.status,
+      scheduledKickoffAt: game.scheduled_kickoff_at,
+      nowMs,
+    })
+  ) {
+    return {
+      ...empty,
+      error: "Your pick is locked because this game has started.",
+    };
+  }
+
+  const { data: otherTeamPicks } = await supabase
+    .from("picks")
+    .select("week_id")
+    .eq("user_id", userId)
+    .eq("team_id", teamId)
+    .neq("week_id", week.id);
+
+  if (otherTeamPicks && otherTeamPicks.length > 0) {
+    const { data: conflictWeek } = await supabase
+      .from("weeks")
+      .select("week_number")
+      .eq("season_id", context.season.id)
+      .in(
+        "id",
+        otherTeamPicks.map((row) => row.week_id),
+      )
+      .order("week_number", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (conflictWeek) {
+      return {
+        ...empty,
+        error: mapPickMutationError(
+          { message: "Team already used by this player in the same season" },
+          {
+            ...mapCtx,
+            conflictWeekNumber: conflictWeek.week_number,
+          },
+        ),
+      };
+    }
+  }
+
   if (existingPick) {
     const { data: updated, error } = await supabase
       .from("picks")
@@ -134,7 +233,7 @@ export async function savePick(
       .maybeSingle();
 
     if (error) {
-      return { ...empty, error: mapPickMutationError(error) };
+      return { ...empty, error: mapPickMutationError(error, mapCtx) };
     }
     const confirmed = requireMutationRow(updated, PICK_UPDATE_ZERO_ROW);
     if (!confirmed.ok) {
@@ -164,7 +263,7 @@ export async function savePick(
     .maybeSingle();
 
   if (error) {
-    return { ...empty, error: mapPickMutationError(error) };
+    return { ...empty, error: mapPickMutationError(error, mapCtx) };
   }
   const confirmed = requireMutationRow(inserted, PICK_INSERT_ZERO_ROW);
   if (!confirmed.ok) {

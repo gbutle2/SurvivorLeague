@@ -155,10 +155,13 @@ export function buildPickGameOptions(args: {
     away: { id: string; abbreviation: string; city: string; name: string };
   }>;
   usedTeamIds: Set<string>;
+  /** Team already saved for this week — never marked used against itself. */
+  retainTeamId?: string | null;
   now?: Date;
 }): PickGameOption[] {
   const now = (args.now ?? new Date()).getTime();
   const options: PickGameOption[] = [];
+  const retain = args.retainTeamId ?? null;
 
   for (const game of args.games) {
     const kickoffMs = new Date(game.scheduled_kickoff_at).getTime();
@@ -182,6 +185,7 @@ export function buildPickGameOptions(args: {
     ];
 
     for (const side of sides) {
+      const isRetained = retain != null && side.team.id === retain;
       options.push({
         gameId: game.id,
         teamId: side.team.id,
@@ -192,7 +196,7 @@ export function buildPickGameOptions(args: {
         homeAway: side.homeAway,
         kickoffAt: game.scheduled_kickoff_at,
         status: game.status,
-        used: args.usedTeamIds.has(side.team.id),
+        used: !isRetained && args.usedTeamIds.has(side.team.id),
         locked,
       });
     }
@@ -205,19 +209,7 @@ export function buildPickGameOptions(args: {
   });
 }
 
-/**
- * True when the player's existing selected team is past its mutation lock.
- * Mirrors DB: status not scheduled/postponed, or kickoff at/before now.
- * When the selected team is missing from options (e.g. canceled), treat as locked.
- */
-export function isExistingPickLocked(args: {
-  selectedTeamId: string | null;
-  options: PickGameOption[];
-}): boolean {
-  if (!args.selectedTeamId) return false;
-  const option = args.options.find(
-    (row) => row.teamId === args.selectedTeamId,
-  );
-  if (!option) return true;
-  return option.locked;
-}
+export {
+  isExistingPickLocked,
+  isGameUnlocked,
+} from "../picks/eligibility.ts";
