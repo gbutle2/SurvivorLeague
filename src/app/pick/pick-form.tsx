@@ -6,11 +6,13 @@ import { savePick, type PickActionState } from "@/app/pick/actions";
 import type { PickGameOption } from "@/lib/nfl/schedule-query";
 
 type PickFormProps = {
+  weekId: string;
   teams: PickGameOption[];
   initialTeamId: string | null;
   weekLabel: string;
   deadlineLabel: string;
   locked: boolean;
+  noEligibleGames?: boolean;
   lastSyncLabel: string;
   nowMs: number;
 };
@@ -35,11 +37,13 @@ function formatKickoff(iso: string): string {
 }
 
 export function PickForm({
+  weekId,
   teams,
   initialTeamId,
   weekLabel,
   deadlineLabel,
   locked,
+  noEligibleGames = false,
   lastSyncLabel,
   nowMs,
 }: PickFormProps) {
@@ -70,6 +74,26 @@ export function PickForm({
     !selectedTeam.locked &&
     new Date(selectedTeam.kickoffAt).getTime() - nowMs < 2 * 60 * 60 * 1000;
 
+  if (noEligibleGames) {
+    return (
+      <section
+        className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm"
+        aria-live="polite"
+      >
+        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+          Your pick
+        </p>
+        <h2 className="mt-1 text-lg font-semibold text-stone-900">
+          Pick window closed for {weekLabel}
+        </h2>
+        <p className="mt-1 text-sm text-stone-600">
+          No eligible unstarted games remain. Used and kicked-off teams cannot
+          be selected.
+        </p>
+      </section>
+    );
+  }
+
   if (locked) {
     return (
       <section
@@ -77,10 +101,10 @@ export function PickForm({
         aria-live="polite"
       >
         <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
-          Locked
+          Locked at kickoff
         </p>
         <h2 className="mt-1 text-lg font-semibold text-amber-950">
-          {weekLabel} kickoffs are complete
+          {weekLabel} pick is locked
         </h2>
         <p className="mt-1 text-sm text-amber-900">{deadlineLabel}</p>
         {selectedTeam ? (
@@ -97,18 +121,24 @@ export function PickForm({
   }
 
   return (
-    <form action={action} className="space-y-4">
+    <form action={action} className="space-y-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+      <input type="hidden" name="week_id" value={weekId} />
       <header className="space-y-1">
         <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
-          NFL {weekLabel}
+          Your pick · {weekLabel}
         </p>
         <h2 className="text-xl font-semibold text-stone-900">
-          Choose a team playing this week
+          {initialTeamId ? "Change your team" : "Choose a team"}
         </h2>
         <p className="text-sm text-stone-600">{deadlineLabel}</p>
+        {selectedTeam && !selectedTeam.locked ? (
+          <p className="text-sm font-medium text-stone-800">
+            Locks at {formatKickoff(selectedTeam.kickoffAt)} for{" "}
+            {selectedTeam.abbreviation}.
+          </p>
+        ) : null}
         <p className="text-xs text-stone-500">
-          Last schedule sync: {lastSyncLabel} (daily refresh + commissioner
-          sync — not live scoring)
+          Last schedule sync: {lastSyncLabel}
         </p>
       </header>
 
@@ -134,8 +164,8 @@ export function PickForm({
           role="status"
         >
           Your selection kicks off soon (
-          {formatKickoff(selectedTeam!.kickoffAt)}). Saving revalidates against
-          database time — a kicked-off game will be rejected.
+          {formatKickoff(selectedTeam!.kickoffAt)}). Changing after kickoff is
+          rejected by the database.
         </p>
       ) : null}
 
@@ -179,8 +209,7 @@ export function PickForm({
                 </span>
                 <span className="mt-0.5 block text-sm text-stone-600">
                   {team.homeAway === "home" ? "vs" : "@"}{" "}
-                  {team.opponentAbbreviation} · {formatKickoff(team.kickoffAt)} ·{" "}
-                  {team.status}
+                  {team.opponentAbbreviation} · {formatKickoff(team.kickoffAt)}
                 </span>
                 <span className="mt-1 flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-wide">
                   {team.used ? (

@@ -5,6 +5,7 @@ import { PickForm } from "@/app/pick/pick-form";
 import { AppShell } from "@/components/app-shell";
 import { LeagueContextError } from "@/components/league-context-error";
 import { StatusPanel } from "@/components/status-panel";
+import { WeekSelector } from "@/components/week-selector";
 import { loadLeagueContext } from "@/lib/league/context";
 import { usedTeamIds } from "@/lib/picks/used-teams";
 import {
@@ -15,19 +16,30 @@ import { createClient } from "@/lib/supabase/server";
 import { formatCentralDateTime } from "@/lib/time/chicago";
 import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 import { loadSeasonWeeks } from "@/lib/weeks/season-weeks";
+import {
+  buildWeekSelectorOptions,
+  parseWeekQueryParam,
+  resolveDefaultWeekNumber,
+  resolveSelectedWeekNumber,
+} from "@/lib/weeks/week-selector";
 
 export const metadata: Metadata = {
-  title: "Current Pick | Sunday Survivor Picks",
+  title: "Your Pick | Sunday Survivor Picks",
 };
 
-export default async function PickPage() {
+export default async function PickPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ week?: string }>;
+}) {
+  const params = await searchParams;
   const result = await loadLeagueContext();
   if (!result.ok) {
     if (result.code === "unauthenticated") {
       redirect("/login");
     }
     return (
-      <AppShell title="Current Pick">
+      <AppShell title="Your Pick">
         <LeagueContextError code={result.code} message={result.message} />
       </AppShell>
     );
@@ -37,7 +49,7 @@ export default async function PickPage() {
 
   if (context.season.status === "setup") {
     return (
-      <AppShell title="Current Pick" subtitle={context.league.name}>
+      <AppShell title="Your Pick" subtitle={context.league.name}>
         <StatusPanel title="Season still in setup" tone="warning">
           <p>
             The {context.season.year} season is still in setup. Ask the
@@ -57,7 +69,7 @@ export default async function PickPage() {
 
   if (weeksError) {
     return (
-      <AppShell title="Current Pick">
+      <AppShell title="Your Pick">
         <StatusPanel title="Database unavailable" tone="danger">
           <p>Could not load weeks. Try again shortly.</p>
         </StatusPanel>
@@ -65,13 +77,17 @@ export default async function PickPage() {
     );
   }
 
+  const competitionWeeks = weeks.filter(
+    (week) => week.week_number <= context.season.regularWeekCount,
+  );
+
   const { signals, error: signalError } = await loadRegularWeekSignals(
     supabase as never,
     context.season.year,
   );
   if (signalError) {
     return (
-      <AppShell title="Current Pick">
+      <AppShell title="Your Pick">
         <StatusPanel title="Schedule unavailable" tone="danger">
           <p>Could not load NFL schedule signals.</p>
         </StatusPanel>
@@ -79,7 +95,23 @@ export default async function PickPage() {
     );
   }
 
-  const current = resolveCurrentWeekFromGames(weeks, signals);
+  const current = resolveCurrentWeekFromGames(competitionWeeks, signals);
+  const effectiveCurrent =
+    current.kind === "actionable" ? current.week.week_number : null;
+  const options = buildWeekSelectorOptions(
+    competitionWeeks,
+    signals,
+    context.season.regularWeekCount,
+    effectiveCurrent,
+  );
+  const selectedWeekNumber = resolveSelectedWeekNumber(
+    parseWeekQueryParam(params.week),
+    options.map((option) => option.weekNumber),
+    resolveDefaultWeekNumber(competitionWeeks, signals),
+  );
+  const week =
+    competitionWeeks.find((item) => item.week_number === selectedWeekNumber) ??
+    null;
 
   const { data: lastSync } = await supabase
     .from("schedule_sync_runs")
@@ -90,33 +122,53 @@ export default async function PickPage() {
     .limit(1)
     .maybeSingle();
 
-  if (current.kind === "none") {
+  if (!week || options.length === 0) {
     return (
-      <AppShell title="Current Pick" subtitle={context.league.name}>
-        <StatusPanel
-          title={
-            current.reason === "no_weeks"
-              ? "NFL schedule not synced"
-              : "No current NFL week"
-          }
-          tone="warning"
-        >
-          <p>
-            {current.reason === "no_weeks"
-              ? "Ask the commissioner to sync the NFL schedule."
-              : "There is no remaining regular-season week with a future kickoff."}
-          </p>
-          {lastSync?.completed_at ? (
-            <p className="mt-2 text-sm">
-              Last schedule sync: {formatCentralDateTime(lastSync.completed_at)}
-            </p>
-          ) : null}
+      <AppShell title="Your Pick" subtitle={context.league.name}>
+        <StatusPanel title="NFL schedule not synced" tone="warning">
+          <p>Ask the commissioner to sync the NFL schedule.</p>
         </StatusPanel>
       </AppShell>
     );
   }
 
-  const week = current.week;
+  if (week.status === "locked" || week.status === "final") {
+    return (
+      <AppShell title="Your Pick" subtitle={context.league.name}>
+        <div className="mb-4">
+          <WeekSelector
+            options={options}
+            selectedWeekNumber={week.week_number}
+            pathname="/pick"
+          />
+        </div>
+        <StatusPanel title={`${week.label} is ${week.status}`} tone="warning">
+          <p>Player picks are read-only for this week.</p>
+        </StatusPanel>
+      </AppShell>
+    );
+  }
+
+  const signal = signals.find((row) => row.week_number === week.week_number);
+  if (!signal) {
+    return (
+      <AppShell title="Your Pick" subtitle={context.league.name}>
+        <div className="mb-4">
+          <WeekSelector
+            options={options}
+            selectedWeekNumber={week.week_number}
+            pathname="/pick"
+          />
+        </div>
+        <StatusPanel title="Schedule unavailable" tone="warning">
+          <p>
+            Schedule data is not available for {week.label} yet. Picks require
+            an authoritative matching game.
+          </p>
+        </StatusPanel>
+      </AppShell>
+    );
+  }
 
   const [{ data: seasonPicks }, { data: games }] = await Promise.all([
     supabase
@@ -178,7 +230,7 @@ export default async function PickPage() {
     };
   });
 
-  const options = buildPickGameOptions({
+  const pickOptions = buildPickGameOptions({
     games: gameRows,
     usedTeamIds: used,
   });
@@ -190,27 +242,26 @@ export default async function PickPage() {
     ? formatCentralDateTime(lastSync.completed_at)
     : "never";
   const renderedAtMs = Date.parse(new Date().toISOString());
-  const staleSync =
-    Boolean(lastSync?.completed_at) &&
-    renderedAtMs - new Date(lastSync!.completed_at!).getTime() >
-      36 * 60 * 60 * 1000;
+  const allLocked =
+    pickOptions.length === 0 || pickOptions.every((option) => option.locked);
 
   return (
-    <AppShell title="Current Pick" subtitle={context.league.name}>
-      {staleSync ? (
-        <StatusPanel title="Schedule may be stale" tone="warning">
-          <p>
-            Last successful NFL sync was {syncLabel}. Scores and kickoffs may
-            lag; this is not a live scoring feed.
-          </p>
-        </StatusPanel>
-      ) : null}
+    <AppShell title="Your Pick" subtitle={context.league.name}>
+      <div className="mb-4">
+        <WeekSelector
+          options={options}
+          selectedWeekNumber={week.week_number}
+          pathname="/pick"
+        />
+      </div>
       <PickForm
-        teams={options}
+        weekId={week.id}
+        teams={pickOptions}
         initialTeamId={existingPick?.team_id ?? null}
         weekLabel={week.label}
-        deadlineLabel="Locks at each team’s kickoff (Central Time)"
-        locked={options.every((option) => option.locked)}
+        deadlineLabel="Locks at your selected team’s kickoff (Central Time)"
+        locked={allLocked && Boolean(existingPick)}
+        noEligibleGames={allLocked && !existingPick}
         lastSyncLabel={syncLabel}
         nowMs={renderedAtMs}
       />

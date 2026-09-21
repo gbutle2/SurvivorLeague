@@ -9,11 +9,9 @@ import {
   PICK_UPDATE_ZERO_ROW,
   requireMutationRow,
 } from "@/lib/mutations/result";
-import { loadRegularWeekSignals } from "@/lib/nfl/schedule-query";
 import { mapPickMutationError } from "@/lib/picks/errors";
 import { setupSeasonBlocksPicks } from "@/lib/season/activation";
 import { createClient } from "@/lib/supabase/server";
-import { resolveCurrentWeekFromGames } from "@/lib/weeks/current-week";
 
 export type PickActionState = {
   error: string | null;
@@ -23,8 +21,9 @@ export type PickActionState = {
 };
 
 /**
- * Save or change the authenticated player's pick for the effective current week.
- * Identity always comes from the session. Database RLS enforces kickoff locks.
+ * Save or change the authenticated player's pick for a scheduled week.
+ * Week and team authority are enforced by database RLS (kickoff + week status).
+ * Browser-submitted user/league/game timestamps are not trusted.
  */
 export async function savePick(
   _prev: PickActionState,
@@ -55,39 +54,34 @@ export async function savePick(
     context.userId,
     String(formData.get("user_id") ?? "") || null,
   );
+  const weekId = String(formData.get("week_id") ?? "").trim();
   const teamId = String(formData.get("team_id") ?? "").trim();
+  if (!weekId) {
+    return { ...empty, error: "Select a week before saving." };
+  }
   if (!teamId) {
     return { ...empty, error: "Select a team before saving." };
   }
 
   const supabase = await createClient();
 
-  const { data: weeks, error: weeksError } = await supabase
+  const { data: week, error: weekError } = await supabase
     .from("weeks")
-    .select("id, week_number, label, locks_at, status")
-    .eq("season_id", context.season.id);
+    .select("id, week_number, label, status, season_id")
+    .eq("id", weekId)
+    .eq("season_id", context.season.id)
+    .maybeSingle();
 
-  if (weeksError) {
-    return { ...empty, error: "Database unavailable. Could not load weeks." };
+  if (weekError || !week) {
+    return { ...empty, error: "That week is not available in this season." };
   }
 
-  const { signals, error: signalError } = await loadRegularWeekSignals(
-    supabase as never,
-    context.season.year,
-  );
-  if (signalError) {
-    return { ...empty, error: "Could not load NFL schedule." };
-  }
-
-  const current = resolveCurrentWeekFromGames(weeks ?? [], signals);
-  if (current.kind !== "actionable" || !current.picksAllowed) {
+  if (week.status === "locked" || week.status === "final") {
     return {
       ...empty,
-      error: "No NFL week is available for picks right now.",
+      error: `${week.label} is ${week.status}. Picks cannot be changed.`,
     };
   }
-
-  const week = current.week;
 
   const { data: team, error: teamError } = await supabase
     .from("teams")
