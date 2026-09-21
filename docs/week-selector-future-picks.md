@@ -6,6 +6,7 @@ Migrations (local only until release):
 - `supabase/migrations/20260922150000_week_selector_future_picks.sql`
 - `supabase/migrations/20260922160000_week_pick_submission_status.sql` (forward correction)
 - `supabase/migrations/20260922170000_commissioner_override_provenance.sql` (durable override stamp)
+- `supabase/migrations/20260922180000_clear_override_stamp_on_selection_change.sql` (clear stamp on any selection change)
 
 ## Authority rules
 
@@ -16,7 +17,7 @@ Migrations (local only until release):
 | Whether a specific team may be chosen or kept | Per-team kickoff via `pick_team_plays_unlocked_in_week` (`scheduled`/`postponed` and `scheduled_kickoff_at > now()`) |
 | Whether an existing pick may still be changed | Selected team's game still unlocked; UI locks the whole form via `isExistingPickLocked` |
 | Peer submission status (without team) | `week_pick_submission_status(week_id)` — `user_id`, `has_pick`, `currently_commissioner_overridden` |
-| Commissioner override indicator | `picks.last_commissioner_override_audit_id` matches a non-cleared audit whose team/game still equal the pick; player team/game updates clear the stamp |
+| Commissioner override indicator | `picks.last_commissioner_override_audit_id` matches a non-cleared audit whose team/game still equal the pick; any `team_id`/`game_id` change clears the stamp (any session) |
 | Commissioner `open` status / one-open index | Administrative only — does **not** gate player picks |
 | Peer pick visibility | Unchanged: own row, or kickoff has started on the pick’s `game_id` |
 
