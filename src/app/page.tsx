@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { AccountMenuHeader } from "@/components/account-menu-header";
+import { CommunicationGate } from "@/components/communication/communication-gate";
 import { LeagueDashboard } from "@/components/league-dashboard";
 import { LeagueContextError } from "@/components/league-context-error";
 import { NavCard } from "@/components/nav-card";
@@ -253,6 +254,7 @@ export default async function HomePage() {
           />
         ) : null}
       </nav>
+      <CommunicationGate />
     </main>
   );
 }

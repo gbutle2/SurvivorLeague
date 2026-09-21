@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { AccountMenuHeader } from "@/components/account-menu-header";
+import { CommunicationGate } from "@/components/communication/communication-gate";
 
 type AppShellProps = {
   title: string;
@@ -46,6 +47,7 @@ export async function AppShell({
         {showAccountMenu ? <AccountMenuHeader /> : null}
       </header>
       {children}
+      <CommunicationGate />
     </main>
   );
 }
