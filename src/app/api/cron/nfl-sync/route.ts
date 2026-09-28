@@ -51,7 +51,7 @@ async function runSync(request: Request) {
     provider: "nflverse",
     seasonYear,
     liveScoring: false,
-    note: "nflverse schedules are not a live scoring feed; daily refresh only on Hobby.",
+    note: "nflverse schedules are not a live scoring feed; Hobby refreshes once daily (~11 PM Central).",
     ...result,
   });
 }

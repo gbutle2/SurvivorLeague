@@ -180,10 +180,10 @@ export default async function CommissionerPage() {
             <p>No sync has been recorded yet for {context.season.year}.</p>
           )}
           <p className="mt-2 text-xs text-stone-500">
-            Vercel Hobby cron refreshes at most daily. Manual sync is the
-            fallback. Kickoff changes sync before the stored kickoff;
-            post-kickoff changes need review. Not live scoring —
-            cancellations/no-contests may need commissioner action.
+            Vercel Hobby cron refreshes once daily around 11 PM Central.
+            Manual sync is the fallback anytime. Kickoff changes sync before
+            the stored kickoff; post-kickoff changes need review. Not live
+            scoring — cancellations/no-contests may need commissioner action.
           </p>
         </StatusPanel>
 

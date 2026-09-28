@@ -67,7 +67,7 @@ Connection strings must never be logged, returned to the browser, or placed in `
 
 ## Freshness expectations
 
-- Vercel **Hobby** plan: at most **one cron job per day** (`vercel.json` → `/api/cron/nfl-sync` at `0 14 * * *`)
+- Vercel **Hobby** plan: at most **one cron job per day** (`vercel.json` → `/api/cron/nfl-sync` at `0 4 * * *` UTC ≈ **11:00 PM Central** during CDT / 10:00 PM during CST)
 - Auth: `Authorization: Bearer <SCHEDULE_SYNC_SECRET|CRON_SECRET>`
 - Commissioner **Sync NFL data** is the manual fallback
 - UI shows last successful sync; stale (>36h) warning on pick page
