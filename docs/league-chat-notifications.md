@@ -69,7 +69,8 @@ Under current product rules and standings logic, a **tie** is treated like a los
 - Red dot: unread league conversation activity
 - Numeric badge: unread DM conversations + unread non-DM alerts (no double-count of DM notifications)
 - Opening League / a DM updates that conversation’s read state
-- Alerts: mark one or mark all; opening the tab does not auto-read
+- Opening the League tab (or opening chat while already on League) clears the red-dot badge immediately
+- Opening the Alerts tab marks all alerts read and clears their portion of the numeric badge
 
 ## Overlay UX
 

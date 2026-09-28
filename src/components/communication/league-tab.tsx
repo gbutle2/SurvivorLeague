@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 
 import {
+  ensureLeagueConversationAction,
   loadConversationMessagesAction,
   markConversationReadAction,
   sendMessageAction,
@@ -18,6 +19,7 @@ type LeagueTabProps = {
   userId: string;
   conversationId: string | null;
   active: boolean;
+  onConversationId?: (conversationId: string) => void;
   onUnreadChange?: () => void;
 };
 
@@ -26,6 +28,7 @@ export function LeagueTab({
   userId,
   conversationId,
   active,
+  onConversationId,
   onUnreadChange,
 }: LeagueTabProps) {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
@@ -34,6 +37,7 @@ export function LeagueTab({
   const [sending, startSend] = useTransition();
   const listRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const resolvedConversationId = conversationId;
 
   const mergeMessage = useCallback((incoming: DisplayMessage) => {
     setMessages((prev) => {
@@ -44,14 +48,34 @@ export function LeagueTab({
     });
   }, []);
 
+  const markRead = useCallback(
+    async (targetConversationId: string, messageId?: string | null) => {
+      const result = await markConversationReadAction(
+        targetConversationId,
+        messageId ?? null,
+      );
+      if (result.ok) {
+        onUnreadChange?.();
+      }
+    },
+    [onUnreadChange],
+  );
+
   const refresh = useCallback(async () => {
-    if (!conversationId) {
-      setLoading(false);
-      setError("League chat is unavailable.");
-      return;
+    let activeConversationId = resolvedConversationId;
+    if (!activeConversationId) {
+      const ensured = await ensureLeagueConversationAction();
+      if (!ensured.ok) {
+        setLoading(false);
+        setError(ensured.error);
+        return;
+      }
+      activeConversationId = ensured.data.conversationId;
+      onConversationId?.(activeConversationId);
     }
+
     setLoading(true);
-    const result = await loadConversationMessagesAction(conversationId);
+    const result = await loadConversationMessagesAction(activeConversationId);
     if (!result.ok) {
       setError(result.error);
       setLoading(false);
@@ -60,7 +84,10 @@ export function LeagueTab({
     setMessages(result.data.messages);
     setError(null);
     setLoading(false);
-  }, [conversationId]);
+
+    const last = result.data.messages[result.data.messages.length - 1];
+    await markRead(activeConversationId, last?.id ?? null);
+  }, [markRead, onConversationId, resolvedConversationId]);
 
   useEffect(() => {
     if (!active) return;
@@ -70,19 +97,21 @@ export function LeagueTab({
     return () => window.clearTimeout(handle);
   }, [active, refresh]);
 
+  // Mark read as soon as the league tab is visible, even before messages load,
+  // so the badge clears immediately when the user opens chat.
   useEffect(() => {
-    if (!active || !conversationId || messages.length === 0) return;
-    const last = messages[messages.length - 1];
-    void markConversationReadAction(conversationId, last?.id).then(() => {
-      onUnreadChange?.();
-    });
-  }, [active, conversationId, messages, onUnreadChange]);
+    if (!active || !resolvedConversationId) return;
+    const handle = window.setTimeout(() => {
+      void markRead(resolvedConversationId, null);
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [active, markRead, resolvedConversationId]);
 
   useEffect(() => {
-    if (!active || !conversationId) return;
+    if (!active || !resolvedConversationId) return;
     const supabase = createClient();
     const channel = supabase
-      .channel(`league-messages:${conversationId}`)
+      .channel(`league-messages:${resolvedConversationId}`)
       .on(
         "postgres_changes",
         {
@@ -93,7 +122,7 @@ export function LeagueTab({
         },
         (payload) => {
           const row = (payload.new ?? payload.old) as MessageRow | undefined;
-          if (!row || row.conversation_id !== conversationId) return;
+          if (!row || row.conversation_id !== resolvedConversationId) return;
           void refresh();
         },
       )
@@ -101,7 +130,7 @@ export function LeagueTab({
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [active, conversationId, leagueId, refresh]);
+  }, [active, resolvedConversationId, leagueId, refresh]);
 
   useEffect(() => {
     if (!stickToBottom.current || !listRef.current) return;
@@ -116,10 +145,10 @@ export function LeagueTab({
   }
 
   function handleSend(body: string) {
-    if (!conversationId) return;
+    if (!resolvedConversationId) return;
     startSend(async () => {
       const result = await sendMessageAction(
-        conversationId,
+        resolvedConversationId,
         body,
         crypto.randomUUID(),
       );
@@ -128,6 +157,7 @@ export function LeagueTab({
       }
       mergeMessage(result.data.message);
       stickToBottom.current = true;
+      await markRead(resolvedConversationId, result.data.message.id);
     });
   }
 

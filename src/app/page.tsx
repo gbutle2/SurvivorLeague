@@ -274,11 +274,10 @@ export default async function HomePage({
       // 0 includes no weeks when preseason (weekNumber <= 0).
       throughWeekNumber: cutoffWeekNumber ?? 0,
       regularSeasonWeekCount: context.season.regularWeekCount,
-      awardSeasonBonuses: Boolean(
-        seasonFullyComplete &&
-          cutoffWeekNumber != null &&
-          cutoffWeekNumber >= context.season.regularWeekCount,
-      ),
+      // Survivor can settle mid-season once the greatest weeks-survived is
+      // locked; best-record / longest-streak stay gated inside standings
+      // until the regular season is fully scored.
+      awardSeasonBonuses: true,
       includePlayoffs: Boolean(
         seasonFullyComplete &&
           cutoffWeekNumber != null &&

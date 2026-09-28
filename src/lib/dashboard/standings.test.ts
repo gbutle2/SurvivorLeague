@@ -707,13 +707,59 @@ describe("historical standings cutoff", () => {
       [],
       {
         throughWeekNumber: 2,
-        awardSeasonBonuses: false,
+        awardSeasonBonuses: true,
         includePlayoffs: false,
         regularSeasonWeekCount: 18,
       },
     )[0];
-    // Two wins only — no best-record / streak season bonuses.
+    // Two wins only — no best-record / streak season bonuses before Week 18.
+    // Survivor also stays unsettled while opening runs can still extend.
     assert.equal(row?.pointsEarned, 2);
+  });
+
+  it("awards tied mid-season survivor winners once the contest is locked", () => {
+    const weeks = [
+      { id: "w1", weekNumber: 1, status: "final" as const },
+      { id: "w2", weekNumber: 2, status: "final" as const },
+      { id: "w3", weekNumber: 3, status: "final" as const },
+      ...Array.from({ length: 15 }, (_, i) => ({
+        id: `w${i + 4}`,
+        weekNumber: i + 4,
+        status: "upcoming" as const,
+      })),
+    ];
+    const picks = [
+      { userId: "a", weekId: "w1", result: "win" as const },
+      { userId: "b", weekId: "w1", result: "win" as const },
+      { userId: "c", weekId: "w1", result: "win" as const },
+      { userId: "a", weekId: "w2", result: "win" as const },
+      { userId: "b", weekId: "w2", result: "win" as const },
+      { userId: "c", weekId: "w2", result: "loss" as const },
+      { userId: "a", weekId: "w3", result: "loss" as const },
+      { userId: "b", weekId: "w3", result: "loss" as const },
+    ];
+    const standings = buildRegularStandings(
+      [players[0]!, players[1]!, players[2]!],
+      weeks,
+      picks,
+      rules,
+      [],
+      [],
+      {
+        throughWeekNumber: 3,
+        awardSeasonBonuses: true,
+        includePlayoffs: false,
+        regularSeasonWeekCount: 18,
+      },
+    );
+    const byId = Object.fromEntries(
+      standings.map((row) => [row.userId, row]),
+    );
+    assert.equal(byId.a?.pointsEarned, 2 + 10);
+    assert.equal(byId.b?.pointsEarned, 2 + 10);
+    assert.equal(byId.c?.pointsEarned, 1);
+    assert.equal(byId.a?.survivorAlive, false);
+    assert.equal(byId.b?.survivorAlive, false);
   });
 
   it("projects remaining season weeks into max possible without later results", () => {
@@ -734,15 +780,15 @@ describe("historical standings cutoff", () => {
       [],
       {
         throughWeekNumber: 1,
-        awardSeasonBonuses: false,
+        awardSeasonBonuses: true,
         includePlayoffs: false,
         regularSeasonWeekCount: 18,
       },
     )[0];
     assert.equal(historical?.wins, 1);
     assert.equal(historical?.pointsEarned, 1);
-    // 17 remaining regular weeks; no midseason bonuses or playoffs projected.
-    assert.equal(historical?.maxPossible, 1 + 17);
+    // 17 remaining regular weeks + attainable mid-season bonuses; no playoffs.
+    assert.equal(historical?.maxPossible, 1 + 17 + 4 + 4 + 10);
   });
 });
 
@@ -835,7 +881,7 @@ describe("live in-progress week standings", () => {
       [],
       {
         throughWeekNumber: 2,
-        awardSeasonBonuses: false,
+        awardSeasonBonuses: true,
         includePlayoffs: false,
         regularSeasonWeekCount: 18,
       },
@@ -843,11 +889,11 @@ describe("live in-progress week standings", () => {
     assert.equal(row?.wins, 1);
     assert.equal(row?.losses, 0);
     assert.equal(row?.missed, 0);
-    // Pending Week 2 + Weeks 3–18 = 17 unresolved weekly points.
-    assert.equal(row?.maxPossible, 1 + 17);
+    // Pending Week 2 + Weeks 3–18 = 17 unresolved weekly points + attainable bonuses.
+    assert.equal(row?.maxPossible, 1 + 17 + 4 + 4 + 10);
   });
 
-  it("does not project midseason season bonuses into max possible", () => {
+  it("projects attainable midseason season bonuses into max possible", () => {
     const picks = [
       { userId: "a", weekId: "w1", result: "win" as const },
       { userId: "a", weekId: "w2", result: "win" as const },
@@ -861,13 +907,13 @@ describe("live in-progress week standings", () => {
       [],
       {
         throughWeekNumber: 2,
-        awardSeasonBonuses: false,
+        awardSeasonBonuses: true,
         includePlayoffs: false,
         regularSeasonWeekCount: 18,
       },
     );
     assert.equal(row?.pointsEarned, 2);
-    assert.equal(row?.maxPossible, 2 + 16);
+    assert.equal(row?.maxPossible, 2 + 16 + 4 + 4 + 10);
   });
 
   it("recomputes correctly after a commissioner win→loss correction", () => {
@@ -1017,14 +1063,14 @@ describe("live in-progress week standings", () => {
       [],
       {
         throughWeekNumber: 2,
-        awardSeasonBonuses: false,
+        awardSeasonBonuses: true,
         includePlayoffs: false,
         regularSeasonWeekCount: 18,
       },
     );
     assert.equal(row?.wins, 2);
     assert.equal(row?.pointsEarned, 2);
-    assert.equal(row?.maxPossible, 2 + 16);
+    assert.equal(row?.maxPossible, 2 + 16 + 4 + 4 + 10);
   });
 });
 

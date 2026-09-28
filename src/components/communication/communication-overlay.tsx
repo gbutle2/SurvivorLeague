@@ -20,6 +20,7 @@ type CommunicationOverlayProps = {
   leagueId: string;
   userId: string;
   leagueConversationId: string | null;
+  onConversationId?: (conversationId: string) => void;
   onUnreadChange: () => void;
 };
 
@@ -37,6 +38,7 @@ export function CommunicationOverlay({
   leagueId,
   userId,
   leagueConversationId,
+  onConversationId,
   onUnreadChange,
 }: CommunicationOverlayProps) {
   const titleId = useId();
@@ -157,6 +159,7 @@ export function CommunicationOverlay({
               userId={userId}
               conversationId={leagueConversationId}
               active={open && tab === "league"}
+              onConversationId={onConversationId}
               onUnreadChange={onUnreadChange}
             />
           ) : null}

@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { loadUnreadBadgeAction } from "@/app/communication/actions";
+import {
+  loadUnreadBadgeAction,
+  markConversationReadAction,
+} from "@/app/communication/actions";
 import { CommunicationOverlay } from "@/components/communication/communication-overlay";
 import {
   COMM_TAB_STORAGE_KEY,
@@ -44,6 +47,13 @@ export function CommunicationHost({ leagueId, userId }: CommunicationHostProps) 
     setNumericBadge(result.data.numericBadge);
     setLeagueConversationId(result.data.leagueConversationId);
   }, []);
+
+  const markLeagueRead = useCallback(async () => {
+    if (!leagueConversationId) return;
+    setRedDot(false);
+    await markConversationReadAction(leagueConversationId);
+    await refreshBadge();
+  }, [leagueConversationId, refreshBadge]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -94,6 +104,16 @@ export function CommunicationHost({ leagueId, userId }: CommunicationHostProps) 
     } catch {
       /* ignore */
     }
+    if (open && next === "league") {
+      void markLeagueRead();
+    }
+  }
+
+  function handleOpen() {
+    setOpen(true);
+    if (tab === "league") {
+      void markLeagueRead();
+    }
   }
 
   const badgeLabel =
@@ -112,7 +132,7 @@ export function CommunicationHost({ leagueId, userId }: CommunicationHostProps) 
           aria-label={`Open messages. ${badgeLabel}`}
           aria-haspopup="dialog"
           aria-expanded={open}
-          onClick={() => setOpen(true)}
+          onClick={handleOpen}
         >
           <SpeechBubbleIcon />
           {redDot ? (
@@ -137,6 +157,7 @@ export function CommunicationHost({ leagueId, userId }: CommunicationHostProps) 
         leagueId={leagueId}
         userId={userId}
         leagueConversationId={leagueConversationId}
+        onConversationId={setLeagueConversationId}
         onUnreadChange={refreshBadge}
       />
     </>

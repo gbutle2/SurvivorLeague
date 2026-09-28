@@ -59,13 +59,29 @@ export function AlertsTab({
     setLoading(false);
   }, []);
 
+  const markAllRead = useCallback(async () => {
+    const result = await markAllNotificationsReadAction();
+    if (!result.ok) return;
+    const readAt = new Date().toISOString();
+    setNotifications((prev) =>
+      prev.map((n) => ({
+        ...n,
+        read_at: n.read_at ?? readAt,
+      })),
+    );
+    onUnreadChange?.();
+  }, [onUnreadChange]);
+
   useEffect(() => {
     if (!active) return;
     const handle = window.setTimeout(() => {
-      void refresh();
+      void (async () => {
+        await refresh();
+        await markAllRead();
+      })();
     }, 0);
     return () => window.clearTimeout(handle);
-  }, [active, refresh]);
+  }, [active, markAllRead, refresh]);
 
   useEffect(() => {
     if (!active) return;
@@ -81,15 +97,17 @@ export function AlertsTab({
           filter: `league_id=eq.${leagueId}`,
         },
         () => {
-          void refresh();
-          onUnreadChange?.();
+          void (async () => {
+            await refresh();
+            await markAllRead();
+          })();
         },
       )
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [active, leagueId, onUnreadChange, refresh, userId]);
+  }, [active, leagueId, markAllRead, refresh, userId]);
 
   function markOne(id: string) {
     startTransition(async () => {
@@ -105,14 +123,7 @@ export function AlertsTab({
 
   function markAll() {
     startTransition(async () => {
-      await markAllNotificationsReadAction();
-      setNotifications((prev) =>
-        prev.map((n) => ({
-          ...n,
-          read_at: n.read_at ?? new Date().toISOString(),
-        })),
-      );
-      onUnreadChange?.();
+      await markAllRead();
     });
   }
 

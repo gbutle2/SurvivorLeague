@@ -34,7 +34,7 @@ Migrations (local only until release):
 
 Standings use `buildRegularStandings(..., { throughWeekNumber, awardSeasonBonuses, includePlayoffs })`.
 
-Cutoff = latest **final** week at or before the selected week (after schedule terminal signals). Mid-season cutoffs do not award season-level best-record / longest-streak bonuses or playoff points.
+Cutoff = latest **final** week at or before the selected week (after schedule terminal signals). Mid-season cutoffs do not award best-record / longest-streak bonuses or playoff points. Survivor bonus is awarded as soon as the greatest weeks-survived result is locked (tied leaders each receive the full bonus).
 
 ## Team reuse
 

@@ -151,6 +151,7 @@ export async function loadConversationMessagesAction(
   const auth = await requireLeagueAuth();
   if (!auth.ok) return { ok: false, error: auth.error };
 
+  const pageSize = Math.min(Math.max(limit, 1), 200);
   const { data, error } = await auth.supabase
     .from("messages")
     .select(
@@ -158,17 +159,16 @@ export async function loadConversationMessagesAction(
     )
     .eq("conversation_id", conversationId)
     .eq("league_id", auth.leagueId)
-    .order("created_at", { ascending: true })
-    .limit(Math.min(Math.max(limit, 1), 200));
+    .order("created_at", { ascending: false })
+    .limit(pageSize);
 
   if (error) {
     return { ok: false, error: "Could not load messages." };
   }
 
-  const messages = await hydrateMessages(
-    auth.supabase,
-    (data ?? []) as MessageRow[],
-  );
+  // Newest-first from the query; present oldest→newest in the UI.
+  const chronological = [...(data ?? [])].reverse() as MessageRow[];
+  const messages = await hydrateMessages(auth.supabase, chronological);
   return { ok: true, data: { messages } };
 }
 

@@ -129,11 +129,16 @@ type SurvivorRun = {
  * Spreadsheet survivor rule (18-week calendar):
  * bonus goes to everyone who survived the greatest number of weeks.
  * 18-0 players each get the full bonus. Pending picks never eliminate or settle.
+ *
+ * `remainingWeekCount` covers weeks after a historical/live cutoff that are not
+ * in `weeks` — opening runs stay incomplete so mid-season cutoffs do not
+ * falsely settle survivor for players still alive.
  */
 export function resolveSurvivorDecision(
   players: DashboardPlayer[],
   weeks: DashboardWeek[],
   picks: DashboardPick[],
+  remainingWeekCount = 0,
 ): SurvivorDecision {
   const orderedWeeks = [...weeks].sort((a, b) => a.weekNumber - b.weekNumber);
   const empty = {
@@ -148,7 +153,7 @@ export function resolveSurvivorDecision(
   }
 
   const runs = players.map((player) =>
-    survivorRunFor(player.userId, orderedWeeks, picks),
+    survivorRunFor(player.userId, orderedWeeks, picks, remainingWeekCount),
   );
   const weeksSurvivedByUser = new Map(
     runs.map((run) => [run.userId, run.weeksSurvived]),
@@ -202,13 +207,15 @@ function survivorRunFor(
   userId: string,
   orderedWeeks: DashboardWeek[],
   picks: DashboardPick[],
+  remainingWeekCount = 0,
 ): SurvivorRun {
   let weeksSurvived = 0;
   let decidedAtWeekNumber: number | null = null;
 
   for (let index = 0; index < orderedWeeks.length; index += 1) {
     const week = orderedWeeks[index]!;
-    const remainingIncludingCurrent = orderedWeeks.length - index;
+    const remainingIncludingCurrent =
+      orderedWeeks.length - index + remainingWeekCount;
     const result = resultFor(picks, userId, week.id);
 
     // Graded wins count even while other games that week are still open.
@@ -247,6 +254,17 @@ function survivorRunFor(
       ceiling: weeksSurvived,
       complete: true,
       decidedAtWeekNumber: week.weekNumber,
+    };
+  }
+
+  // Cutoff mid-season: more weeks remain beyond the scored window.
+  if (remainingWeekCount > 0) {
+    return {
+      userId,
+      weeksSurvived,
+      ceiling: weeksSurvived + remainingWeekCount,
+      complete: false,
+      decidedAtWeekNumber,
     };
   }
 
@@ -407,8 +425,9 @@ export type BuildStandingsOptions = {
   throughWeekNumber?: number | null;
   /**
    * When false, season-level bonuses (best record / longest streak /
-   * survivor) are neither awarded nor projected into max possible — for
-   * mid-season historical and live cutoffs.
+   * survivor) are neither awarded nor projected into max possible.
+   * When true, survivor awards as soon as decided; best-record and
+   * longest-streak still wait until the regular season is fully scored.
    * Default true (full-season dashboard behavior).
    */
   awardSeasonBonuses?: boolean;
@@ -446,10 +465,19 @@ export function buildRegularStandings(
         : week.weekNumber <= throughWeekNumber,
     )
     .sort((a, b) => a.weekNumber - b.weekNumber);
-  const survivor = resolveSurvivorDecision(players, orderedWeeks, picks);
+  const weeksAfterCutoff =
+    throughWeekNumber != null && regularSeasonWeekCount != null
+      ? Math.max(0, regularSeasonWeekCount - throughWeekNumber)
+      : 0;
+  const survivor = resolveSurvivorDecision(
+    players,
+    orderedWeeks,
+    picks,
+    weeksAfterCutoff,
+  );
   const survivorWinners = new Set(survivor.winnerUserIds);
   const runs = players.map((player) =>
-    survivorRunFor(player.userId, orderedWeeks, picks),
+    survivorRunFor(player.userId, orderedWeeks, picks, weeksAfterCutoff),
   );
   const maxSurvivorFloor = Math.max(0, ...runs.map((run) => run.weeksSurvived));
 
@@ -468,11 +496,6 @@ export function buildRegularStandings(
       playoffAlive,
     );
   });
-
-  const weeksAfterCutoff =
-    throughWeekNumber != null && regularSeasonWeekCount != null
-      ? Math.max(0, regularSeasonWeekCount - throughWeekNumber)
-      : 0;
 
   const unresolvedForMax = (player: PlayerTallies) =>
     player.unresolvedRegularWeeks + weeksAfterCutoff;
@@ -545,11 +568,8 @@ export function buildRegularStandings(
 
       if (awardSeasonBonuses && !survivor.decided) {
         const run = runs.find((entry) => entry.userId === player.userId);
-        // Remaining weeks after the cutoff can still extend an opening survivor run.
-        const ceilingWithFuture = run
-          ? run.ceiling + weeksAfterCutoff
-          : 0;
-        if (run && ceilingWithFuture >= maxSurvivorFloor) {
+        // Ceiling already includes weeks after the cutoff for incomplete runs.
+        if (run && run.ceiling >= maxSurvivorFloor) {
           possibleBonuses += rules.survivorBonus;
         }
       }
